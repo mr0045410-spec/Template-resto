@@ -76,7 +76,29 @@ self.addEventListener('fetch', function (event) {
     return;
   }
 
-  // 2) Aset same-origin -> cache-first, fallback navigasi ke pos.html
+  // 2) Navigasi HTML (pos.html / owner.html) -> network-first, fallback ke
+  //    cache saat offline. (Cache-first bikin update aplikasi tidak terlihat
+  //    sampai sw.js berubah.)
+  if (url.origin === self.location.origin &&
+      (req.mode === 'navigate' || req.destination === 'document')) {
+    event.respondWith(
+      fetch(req).then(function (res) {
+        if (res && res.ok) {
+          var copy = res.clone();
+          caches.open(CACHE_NAME).then(function (c) { c.put(req, copy); });
+        }
+        return res;
+      }).catch(function () {
+        return caches.match(req).then(function (hit) {
+          if (hit) return hit;
+          return caches.match('./pos.html');
+        });
+      })
+    );
+    return;
+  }
+
+  // 3) Aset same-origin lain -> cache-first, fallback navigasi ke pos.html
   if (url.origin === self.location.origin) {
     event.respondWith(
       caches.match(req).then(function (hit) {
@@ -96,7 +118,7 @@ self.addEventListener('fetch', function (event) {
     return;
   }
 
-  // 3) CDN pihak ketiga (tailwind/lucide sudah di APP_SHELL) -> cache-first
+  // 4) CDN pihak ketiga (tailwind/lucide sudah di APP_SHELL) -> cache-first
   event.respondWith(
     caches.match(req).then(function (hit) {
       if (hit) return hit;
