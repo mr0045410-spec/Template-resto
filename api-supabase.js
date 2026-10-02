@@ -205,7 +205,6 @@
       promoId: r.promo_id || null, promoName: r.promo_name || null,
       customerId: r.customer_id || null, customerName: r.customer_name || null,
       customerPhone: r.customer_phone || null,
-      
       pointsEarned: Number(r.points_earned) || 0, pointsRedeemed: Number(r.points_redeemed) || 0
     };
   }
@@ -361,7 +360,7 @@
     var item = {
       id: body.id || (String(body.name).toLowerCase().replace(/[^a-z0-9]/g, '-') + '-' + Math.floor(Math.random() * 1000)),
       name: body.name,
-      category: body.category || 'bomboloni',
+      category: body.category || 'makanan',
       tag: body.tag || 'New Special',
       description: body.description || '',
       price: String(body.price).startsWith('Rp') ? body.price : formatRp(String(body.price).replace(/[^0-9]/g, '')),
@@ -404,9 +403,42 @@
         highlight_texture: body.highlightTexture !== undefined ? body.highlightTexture : cur.highlightTexture,
         updated_at: new Date().toISOString()
       };
+      var oldPv = Number(rows[0].price_value) || parsePriceToNumber(cur.price);
+      var newPv = Number(patch.price_value) || 0;
       return upd('menu_items', 'id=eq.' + encodeURIComponent(body.id), patch)
-        .then(function (u) { return ok({ success: true, item: rowToMenuItem(u[0]) }); });
+        .then(function (u) {
+          // Catat riwayat perubahan harga jual (non-fatal — tabel boleh belum ada).
+          if (newPv !== oldPv && newPv > 0) {
+            ins('price_history', [{
+              id: uid('ph'), menu_id: body.id, menu_name: patch.name,
+              old_price: oldPv, new_price: newPv,
+              changed_by: body.changedBy || 'Owner'
+            }]).catch(function () {});
+          }
+          return ok({ success: true, item: rowToMenuItem(u[0]) });
+        });
     }).catch(serverError);
+  };
+
+  // 5b. GET /api/owner/price-history — riwayat perubahan harga jual menu.
+  //     Query opsional: ?menu_id=xxx (satu menu) atau tanpa (semua, 200 terbaru).
+  //     Tabel boleh belum ada (skema belum di-run user) -> kembalikan kosong.
+  routes['GET /api/owner/price-history'] = function (body, query) {
+    var q = 'select=*&order=created_at.desc&limit=200';
+    if (query && query.menu_id) q += '&menu_id=eq.' + encodeURIComponent(query.menu_id);
+    return sel('price_history', q).then(function (rows) {
+      var hist = (rows || []).map(function (r) {
+        return {
+          id: r.id, menuId: r.menu_id, menuName: r.menu_name || '',
+          oldPrice: Number(r.old_price) || 0, newPrice: Number(r.new_price) || 0,
+          changedBy: r.changed_by || '-', changedAt: r.created_at
+        };
+      });
+      return ok({ success: true, history: hist });
+    }).catch(function (e) {
+      console.error('[api-supabase] price-history:', (e && e.message) || e);
+      return ok({ success: true, history: [] });
+    });
   };
 
   // 6. DELETE /api/menu
@@ -529,7 +561,7 @@
           // Kolom loyalitas (skema bagian 14); strip bila belum ada.
           if (!hasLoyalty) {
             delete row.customer_id; delete row.customer_name;
-            delete row.points_earned; delete row.points_redeemed;          
+            delete row.points_earned; delete row.points_redeemed;
           }
           return ordersHasPhoneCol();
         }).then(function (hasPhone) {
@@ -961,13 +993,14 @@
       return _hasLoyaltyCols;
     });
   }
+
   var _hasPhoneCol = null;
   function ordersHasPhoneCol() {
     if (_hasPhoneCol !== null) return Promise.resolve(_hasPhoneCol);
     return sel('orders', 'select=customer_phone&limit=1').then(function () {
       _hasPhoneCol = true;
       return true;
-  }).catch(function (e) {
+    }).catch(function (e) {
       _hasPhoneCol = !/customer_phone/i.test(String((e && e.message) || ''));
       return _hasPhoneCol;
     });
@@ -1247,10 +1280,11 @@
         hourMap[hh] = { hour: hh, count: 0, revenue: 0 };
       }
       var categoryMap = {
-        bomboloni: { name: 'Bomboloni', qty: 0, revenue: 0 },
-        brownies: { name: 'Brownies & Brookies', qty: 0, revenue: 0 },
-        cookies: { name: 'Cookies', qty: 0, revenue: 0 },
-        beverages: { name: 'Drinks & Coffee', qty: 0, revenue: 0 },
+        makanan: { name: 'Makanan', qty: 0, revenue: 0 },
+        minuman: { name: 'Minuman', qty: 0, revenue: 0 },
+        snack: { name: 'Snack', qty: 0, revenue: 0 },
+        dessert: { name: 'Dessert', qty: 0, revenue: 0 },
+        bundling: { name: 'Paket Bundling', qty: 0, revenue: 0 },
         other: { name: 'Lainnya', qty: 0, revenue: 0 }
       };
       var itemPerformanceMap = {};
@@ -1518,7 +1552,7 @@
         var menuOp;
         if (!mrows.length) {
           var item = {
-            id: menuId, name: body.name, category: body.category || 'bomboloni',
+            id: menuId, name: body.name, category: body.category || 'makanan',
             tag: 'Menu Baru', description: 'Kreasi dessert terbaru dari dapur ' + __brand('name', "My Kitchen") + '.',
             price: formattedPrice, bundleInfo: '', safeForShipping: true,
             stockQty: 25, inStock: true,
