@@ -171,7 +171,7 @@
         <!-- Search Input -->
         <div class="relative flex-1 max-w-md">
           <i data-lucide="search" class="w-4 h-4 absolute left-3.5 top-1/2 -translate-y-1/2 text-stone-400"></i>
-          <input type="text" id="menu-search" placeholder="Cari nama menu / bomboloni / brownies..." 
+          <input type="text" id="menu-search" placeholder="Cari nama menu..." 
                  class="w-full pl-10 pr-8 py-2 text-sm bg-stone-100 rounded-xl border border-transparent focus:border-brand focus:bg-white focus:outline-none transition-all">
           <button id="clear-search" onclick="clearSearch()" class="hidden absolute right-2.5 top-1/2 -translate-y-1/2 text-stone-400 hover:text-stone-600">
             <i data-lucide="x" class="w-3.5 h-3.5"></i>
@@ -731,7 +731,10 @@
         const data = await res.json();
         if (data.success && data.data) {
           menuItems = data.data.menuItems || [];
-          categories = data.data.categories || [];
+          // Kategori dihitung dari menu yang ADA (bukan daftar statis),
+          // jadi pil kategori hanya muncul kalau memang ada menunya.
+          categories = deriveCategories(menuItems);
+          currentCategory = 'all';
           renderCategoryPills();
           renderProducts();
           renderCart(); // tampilkan empty state sejak awal (bukan area blank)
@@ -967,9 +970,37 @@
       }
     }
 
+    // Nama tampilan kategori menu (id -> label).
+    var CATEGORY_NAMES = {
+      makanan: 'Makanan',
+      minuman: 'Minuman',
+      snack: 'Snack',
+      dessert: 'Dessert',
+      bundling: 'Paket Bundling'
+    };
+    function prettyCat(id) {
+      var s = String(id || '').replace(/[_-]+/g, ' ').trim();
+      return s ? s.charAt(0).toUpperCase() + s.slice(1) : 'Lainnya';
+    }
+    function deriveCategories(items) {
+      var seen = {};
+      var cats = [{ id: 'all', name: 'Semua Menu' }];
+      (items || []).forEach(function (it) {
+        var cid = String(it.category || '').trim() || 'makanan';
+        if (!seen[cid]) {
+          seen[cid] = true;
+          cats.push({ id: cid, name: CATEGORY_NAMES[cid] || prettyCat(cid) });
+        }
+      });
+      return cats;
+    }
+
     // Render Category Pills
     function renderCategoryPills() {
       const container = document.getElementById('category-pills');
+      // Sembunyikan bar kategori kalau belum ada menu berkategori
+      const hasCats = categories.some(c => c.id !== 'all');
+      container.style.display = hasCats ? '' : 'none';
       let html = `
         <button onclick="setCategory('all')" class="px-3 py-1.5 rounded-full font-bold whitespace-nowrap transition-all ${currentCategory === 'all' ? 'bg-[#450A0A] text-white shadow-xs' : 'bg-stone-100 text-stone-600 hover:bg-stone-200'}">
           Semua
@@ -993,6 +1024,7 @@
     function renderCategoryRail() {
       const rail = document.getElementById('category-rail');
       if (!rail || typeof categories === 'undefined') return;
+      rail.style.display = categories.some(c => c.id !== 'all') ? '' : 'none';
       const abbrev = (name) => {
         const words = String(name).trim().split(/\s+/);
         if (words.length >= 2) return (words[0][0] + words[1][0]).toUpperCase();
