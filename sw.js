@@ -3,8 +3,9 @@
  *
  * - App shell (HTML/JS/CSS/CDN) di-cache saat install -> halaman tetap bisa
  *   dibuka walau internet mati.
- * - GET ke Supabase REST: stale-while-revalidate -> data menu/kategori tetap
- *   tampil offline (dari cache terakhir).
+ * - GET ke Supabase REST: network-first -> data selalu segar saat online
+ *   (habis simpan langsung tampil tanpa refresh halaman); saat offline
+ *   fallback ke cache terakhir.
  * - POST/PUT/PATCH/DELETE tidak di-cache; saat offline request gagal dan
  *   ditangani lapisan outbox di api-supabase.js (checkout diantre, disinkron
  *   otomatis saat online).
@@ -54,16 +55,22 @@ self.addEventListener('fetch', function (event) {
   var url;
   try { url = new URL(req.url); } catch (e) { return; }
 
-  // 1) Supabase REST GET -> stale-while-revalidate
+  // 1) Supabase REST GET -> network-first, fallback ke cache saat offline.
+  //    (Dulu stale-while-revalidate: baca ulang sesudah simpan masih dapat
+  //    cache lama sampai halaman di-refresh.)
   if (isSupabaseRest(url)) {
     event.respondWith(
-      caches.open(CACHE_NAME).then(function (cache) {
-        return cache.match(req).then(function (hit) {
-          var net = fetch(req).then(function (res) {
-            if (res && res.ok) cache.put(req, res.clone());
-            return res;
-          }).catch(function () { return hit || Response.error(); });
-          return hit || net;
+      fetch(req).then(function (res) {
+        if (res && res.ok) {
+          var copy = res.clone();
+          caches.open(CACHE_NAME).then(function (cache) { cache.put(req, copy); });
+        }
+        return res;
+      }).catch(function () {
+        return caches.open(CACHE_NAME).then(function (cache) {
+          return cache.match(req).then(function (hit) {
+            return hit || Response.error();
+          });
         });
       })
     );
