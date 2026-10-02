@@ -98,21 +98,20 @@ self.addEventListener('fetch', function (event) {
     return;
   }
 
-  // 3) Aset same-origin lain -> cache-first, fallback navigasi ke pos.html
+  // 3) Aset same-origin lain (JS/CSS/gambar) -> stale-while-revalidate:
+  //    sajikan cache langsung (cepat + tetap jalan offline), perbarui di
+  //    background agar update kode ikut tersebar (maks. 1 kunjungan).
   if (url.origin === self.location.origin) {
     event.respondWith(
       caches.match(req).then(function (hit) {
-        if (hit) return hit;
-        return fetch(req).then(function (res) {
+        var net = fetch(req).then(function (res) {
           if (res && res.ok) {
             var copy = res.clone();
             caches.open(CACHE_NAME).then(function (c) { c.put(req, copy); });
           }
           return res;
-        }).catch(function () {
-          if (req.mode === 'navigate') return caches.match('./pos.html');
-          return Response.error();
-        });
+        }).catch(function () { return hit || Response.error(); });
+        return hit || net;
       })
     );
     return;
