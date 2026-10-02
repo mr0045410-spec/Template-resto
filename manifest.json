@@ -1,0 +1,19 @@
+{
+  "background_color": "#FEF2F2",
+  "description": "Point of Sale My Kitchen — kasir resto, bisa jalan offline",
+  "display": "standalone",
+  "icons": [
+    {
+      "purpose": "any",
+      "sizes": "any",
+      "src": "./assets/logo-my-kitchen.svg",
+      "type": "image/svg+xml"
+    }
+  ],
+  "name": "My Kitchen POS",
+  "orientation": "any",
+  "scope": "./",
+  "short_name": "My Kitchen",
+  "start_url": "./pos.html",
+  "theme_color": "#DC2626"
+}
