@@ -2,7 +2,7 @@
 <html lang="id">
 <head>
   <script src="brand-config.js"></script>
-  <script src="api-supabase.js?v=20261003d"></script>
+  <script src="api-supabase.js?v=20261003e"></script>
   <!-- api-shim: ganti /api/* dgn localStorage (perbaikan persistensi utk hosting statis) -->
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
@@ -1758,6 +1758,15 @@
                 <span class="absolute left-3 top-1/2 -translate-y-1/2 font-bold text-stone-400 text-xs">Rp</span>
                 <input type="number" id="recipe-modal-price-input" required min="500" step="500" placeholder="25000" oninput="calculateRecipeModalTotals()"
                        class="w-full pl-9 pr-3 py-2 rounded-xl border border-stone-300 font-mono font-bold text-xs focus:border-brand focus:outline-none bg-white">
+              </div>
+              <!-- Riwayat perubahan harga (hanya saat edit menu lama) -->
+              <div id="price-history-wrap" class="hidden mt-1.5">
+                <button type="button" onclick="document.getElementById('price-history-list').classList.toggle('hidden'); if(window.lucide) lucide.createIcons();"
+                        class="text-[11px] font-bold text-stone-500 hover:text-brand flex items-center gap-1 transition-colors">
+                  <i data-lucide="history" class="w-3.5 h-3.5"></i>
+                  <span>Riwayat perubahan harga</span>
+                </button>
+                <div id="price-history-list" class="hidden mt-1.5 text-[11px]"></div>
               </div>
             </div>
 
@@ -4298,6 +4307,8 @@
       editingRecipeMenuId = null;
       document.getElementById('recipe-modal-is-new').value = 'true';
       document.getElementById('recipe-modal-menu-id').value = '';
+      const phw = document.getElementById('price-history-wrap');
+      if (phw) phw.classList.add('hidden');
       
       document.getElementById('recipe-modal-title').textContent = 'Tambah Menu Baru & Racik Resep';
       const badge = document.getElementById('recipe-modal-mode-badge');
@@ -4328,6 +4339,40 @@
       setTimeout(() => document.getElementById('recipe-modal-name-input').focus(), 60);
     }
 
+    // --- Riwayat perubahan harga jual (per menu) ---
+    async function loadPriceHistory(menuId) {
+      const wrap = document.getElementById('price-history-wrap');
+      const list = document.getElementById('price-history-list');
+      if (!wrap || !list) return;
+      if (!menuId) { wrap.classList.add('hidden'); return; }
+      wrap.classList.remove('hidden');
+      list.classList.add('hidden');
+      list.innerHTML = '<p class="text-stone-400 italic">Memuat...</p>';
+      try {
+        const res = await fetch('/api/owner/price-history?menu_id=' + encodeURIComponent(menuId));
+        const data = await res.json();
+        const hist = (data.success && data.history) || [];
+        if (!hist.length) {
+          list.innerHTML = '<p class="text-stone-400 italic">Belum ada perubahan harga tercatat.</p>';
+          return;
+        }
+        list.innerHTML = hist.map(h => {
+          const d = new Date(h.changedAt);
+          const tstr = d.toLocaleDateString('id-ID', { day: 'numeric', month: 'short', year: 'numeric' });
+          const up = h.newPrice > h.oldPrice;
+          return `<div class="flex items-center justify-between py-1 border-b border-stone-100 last:border-0">
+            <span class="text-stone-500">${tstr}</span>
+            <span class="font-mono"><span class="text-stone-400 line-through">${formatRupiah(h.oldPrice)}</span>
+            <span class="mx-1 font-bold ${up ? 'text-rose-600' : 'text-emerald-600'}">${up ? '▲' : '▼'}</span>
+            <span class="font-bold">${formatRupiah(h.newPrice)}</span></span>
+          </div>`;
+        }).join('');
+      } catch (err) {
+        console.error('Error loading price history:', err);
+        list.innerHTML = '<p class="text-stone-400 italic">Gagal memuat riwayat.</p>';
+      }
+    }
+
     function openRecipeModal(menuId) {
       editingRecipeMenuId = menuId;
       const menu = allMenuItemsList.find(m => m.id === menuId);
@@ -4350,6 +4395,7 @@
       const numericPrice = Number(String(menu.price || 0).replace(/[^0-9]/g, '')) || 0;
       document.getElementById('recipe-modal-price-input').value = numericPrice;
       document.getElementById('recipe-modal-img-input').value = menu.image || '';
+      loadPriceHistory(menuId);
       
       const imgEl = document.getElementById('recipe-modal-menu-img');
       if (imgEl) imgEl.src = menu.image || BRAND.logo;
