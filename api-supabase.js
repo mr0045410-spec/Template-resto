@@ -403,20 +403,8 @@
         highlight_texture: body.highlightTexture !== undefined ? body.highlightTexture : cur.highlightTexture,
         updated_at: new Date().toISOString()
       };
-      var oldPv = Number(rows[0].price_value) || parsePriceToNumber(cur.price);
-      var newPv = Number(patch.price_value) || 0;
       return upd('menu_items', 'id=eq.' + encodeURIComponent(body.id), patch)
-        .then(function (u) {
-          // Catat riwayat perubahan harga jual (non-fatal — tabel boleh belum ada).
-          if (newPv !== oldPv && newPv > 0) {
-            ins('price_history', [{
-              id: uid('ph'), menu_id: body.id, menu_name: patch.name,
-              old_price: oldPv, new_price: newPv,
-              changed_by: body.changedBy || 'Owner'
-            }]).catch(function () {});
-          }
-          return ok({ success: true, item: rowToMenuItem(u[0]) });
-        });
+        .then(function (u) { return ok({ success: true, item: rowToMenuItem(u[0]) }); });
     }).catch(serverError);
   };
 
@@ -1550,6 +1538,8 @@
       var costP = Math.round(calculatedCost);
       return sel('menu_items', 'select=*&id=eq.' + encodeURIComponent(menuId)).then(function (mrows) {
         var menuOp;
+        var isNewMenu = !mrows.length;
+        var oldPv = isNewMenu ? 0 : (Number(mrows[0].price_value) || parsePriceToNumber(mrows[0].price));
         if (!mrows.length) {
           var item = {
             id: menuId, name: body.name, category: body.category || 'makanan',
@@ -1571,8 +1561,20 @@
           menuOp = upd('menu_items', 'id=eq.' + encodeURIComponent(menuId), patch)
             .then(function (ur) { return ur[0]; });
         }
-        return menuOp;
-      }).then(function (menuRow) {
+        return menuOp.then(function (row) { return { row: row, oldPv: oldPv, isNewMenu: isNewMenu }; });
+      }).then(function (ctx) {
+        var menuRow = ctx.row;
+        // Catat riwayat perubahan harga jual (non-fatal — tabel boleh belum ada).
+        if (!ctx.isNewMenu && body.price) {
+          var newPv = Number(menuRow.price_value) || parsePriceToNumber(body.price);
+          if (newPv !== ctx.oldPv && newPv > 0) {
+            ins('price_history', [{
+              id: uid('ph'), menu_id: menuId, menu_name: body.name,
+              old_price: ctx.oldPv, new_price: newPv,
+              changed_by: body.changedBy || 'Owner'
+            }]).catch(function () {});
+          }
+        }
         // 2. Baru upsert resep
         return sel('recipes', 'select=menu_id&menu_id=eq.' + encodeURIComponent(menuId)).then(function (ex) {
           var op = ex.length
