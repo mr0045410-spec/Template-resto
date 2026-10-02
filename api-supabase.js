@@ -2892,6 +2892,35 @@
     }).catch(serverError);
   };
 
+  // 44b. GET /api/owner/void-logs — laporan void: daftar pembatalan order
+  //      + nominalnya (untuk owner). Urut terbaru dulu, maks 200.
+  routes['GET /api/owner/void-logs'] = function () {
+    return sel('void_logs', 'select=*&order=created_at.desc&limit=200').then(function (logs) {
+      logs = logs || [];
+      var ids = [], seen = {};
+      logs.forEach(function (l) {
+        if (l.order_id && !seen[l.order_id]) { seen[l.order_id] = 1; ids.push(l.order_id); }
+      });
+      if (!ids.length) return ok({ success: true, voids: [] });
+      return sel('orders', 'select=id,total,table_or_customer,created_at&id=in.(' +
+        ids.map(function (x) { return encodeURIComponent(x); }).join(',') + ')').then(function (orders) {
+        var byId = {};
+        (orders || []).forEach(function (o) { byId[o.id] = o; });
+        var voids = logs.map(function (l) {
+          var o = byId[l.order_id] || {};
+          return {
+            id: l.id, orderId: l.order_id, reason: l.reason || '-',
+            voidedBy: l.voided_by || '-', voidedAt: l.created_at,
+            orderTotal: Number(o.total) || 0,
+            tableOrCustomer: o.table_or_customer || '',
+            orderedAt: o.created_at || null
+          };
+        });
+        return ok({ success: true, voids: voids });
+      });
+    }).catch(serverError);
+  };
+
   /* ================================================================== */
   /* Export CSV / Excel                                                  */
   /* ================================================================== */
