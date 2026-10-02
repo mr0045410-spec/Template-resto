@@ -15,7 +15,6 @@ var CACHE_NAME = 'mykitchen-pos-v1';
 var APP_SHELL = [
   './pos.html',
   './owner.html',
-  './admin.html',
   './api-supabase.js',
   './brand-config.js',
   './manifest.json',
