@@ -458,6 +458,17 @@
         </div>
       </div>
 
+      <!-- Data pelanggan (opsional — tercetak di struk) -->
+      <div class="pb-1">
+        <span class="text-[11px] font-semibold text-stone-400 block mb-1.5">Data pelanggan <span class="font-normal">(opsional — tercetak di struk)</span>:</span>
+        <div class="grid grid-cols-2 gap-2">
+          <input type="text" id="cust-name-input" placeholder="Nama pelanggan" autocomplete="off"
+                 class="w-full px-3 py-2 text-xs rounded-xl border border-stone-300 focus:border-brand focus:outline-none font-medium">
+          <input type="tel" id="cust-phone-input" placeholder="No. HP (08xx)" inputmode="tel" autocomplete="off"
+                 class="w-full px-3 py-2 text-xs rounded-xl border border-stone-300 focus:border-brand focus:outline-none font-medium font-mono">
+        </div>
+      </div>
+
       <!-- Payment Submit Button -->
       <div class="pt-4 mt-2 border-t border-stone-100 flex gap-2">
         <button type="button" onclick="closePaymentModal()" class="w-1/3 py-3 rounded-xl border border-stone-300 text-stone-600 font-bold text-xs hover:bg-stone-50">
@@ -1760,6 +1771,11 @@
         return;
       }
 
+      const manualCustName = document.getElementById('cust-name-input').value.trim();
+      const manualCustPhone = document.getElementById('cust-phone-input').value.replace(/[^0-9+]/g, '');
+      // Nama pelanggan: input manual > (takeaway: kolom nama). Member ditangani server.
+      const customerName = manualCustName || (orderType === 'takeaway' ? tableOrCustomer : '');
+
       // Check cash sufficiency
       if (selectedPayment === 'cash' && currentCashReceived < grandTotal) {
         toast('Jumlah uang tunai yang diterima masih kurang!', 'error');
@@ -1779,6 +1795,8 @@
       const payload = {
         orderType,
         tableOrCustomer: tableOrCustomer || (orderType === 'dine-in' ? 'Meja Walk-in' : 'Pelanggan Walk-in'),
+        customerName: customerName,
+        customerPhone: manualCustPhone,
         items: cart.map(c => ({
           id: c.id,
           name: c.name,
@@ -1820,6 +1838,8 @@
           clearPromo(true); // reset promo utk transaksi berikutnya
           clearLoyaltyCustomer(true); // reset pelanggan utk transaksi berikutnya
           document.getElementById('order-table-customer').value = ''; // reset meja/nama — jangan kebawa ke order berikutnya
+          document.getElementById('cust-name-input').value = '';
+          document.getElementById('cust-phone-input').value = '';
           document.getElementById('receipt-modal').classList.remove('hidden');
           if (result.offline) toast('Mode offline: order tersimpan & otomatis disinkron saat internet kembali.', 'warning');
           try { await initPOS(); } catch (e) { /* offline: lewati refresh */ }
@@ -1928,8 +1948,8 @@
         </div>
 
         <div class="pt-3 text-center text-[10px] text-stone-500 space-y-1">
-          ${order.customerName ? `
-            <p class="font-bold text-amber-700">Member: ${escapeHtml(order.customerName)}${order.pointsEarned > 0 ? ` • +${order.pointsEarned} poin` : ''}</p>
+          ${(order.customerName || order.customerPhone) ? `
+            <p class="font-bold text-amber-700">${order.customerId ? 'Member' : 'Pelanggan'}${order.customerName ? ': ' + escapeHtml(order.customerName) : ''}${order.customerPhone ? ` • ${escapeHtml(order.customerPhone)}` : ''}${order.pointsEarned > 0 ? ` • +${order.pointsEarned} poin` : ''}</p>
           ` : ''}
           <p class="font-bold text-stone-700">Terima kasih atas pesanan Anda!</p>
           <p>Tag kami di Instagram Story ${BRAND.instagram}</p>
