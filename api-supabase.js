@@ -204,6 +204,8 @@
       clientRef: r.client_ref || null,
       promoId: r.promo_id || null, promoName: r.promo_name || null,
       customerId: r.customer_id || null, customerName: r.customer_name || null,
+      customerPhone: r.customer_phone || null,
+      
       pointsEarned: Number(r.points_earned) || 0, pointsRedeemed: Number(r.points_redeemed) || 0
     };
   }
@@ -222,6 +224,7 @@
       client_ref: o.clientRef || null,
       promo_id: o.promoId || null, promo_name: o.promoName || null,
       customer_id: o.customerId || null, customer_name: o.customerName || null,
+      customer_phone: o.customerPhone || null,
       points_earned: Number(o.pointsEarned) || 0, points_redeemed: Number(o.pointsRedeemed) || 0
     };
   }
@@ -457,7 +460,8 @@
         promoName: pr.promo ? pr.promo.name : null,
         promoWarning: pr.warning || (lr.warning || ''),
         customerId: lr.customer ? lr.customer.id : null,
-        customerName: lr.customer ? lr.customer.name : null,
+        customerName: body.customerName || (lr.customer ? lr.customer.name : null),
+        customerPhone: body.customerPhone || (lr.customer ? lr.customer.phone : null) || null,
         pointsEarned: 0, // diisi setelah order tercipta (butuh total final)
         pointsRedeemed: lr.redeemPoints || 0,
         taxRate: Number(body.taxRate) || 0,
@@ -525,8 +529,12 @@
           // Kolom loyalitas (skema bagian 14); strip bila belum ada.
           if (!hasLoyalty) {
             delete row.customer_id; delete row.customer_name;
-            delete row.points_earned; delete row.points_redeemed;
+            delete row.points_earned; delete row.points_redeemed;          
           }
+          return ordersHasPhoneCol();
+        }).then(function (hasPhone) {
+          // Kolom customer_phone (fitur nama+HP di struk); strip bila belum ada.
+          if (!hasPhone) delete row.customer_phone;
           return ins('orders', [row]);
         }).then(function () {
           // Catat pemakaian promo (non-fatal: gagal catat tidak menggagalkan checkout).
@@ -951,6 +959,17 @@
     }).catch(function (e) {
       _hasLoyaltyCols = !/customer_id/i.test(String((e && e.message) || ''));
       return _hasLoyaltyCols;
+    });
+  }
+  var _hasPhoneCol = null;
+  function ordersHasPhoneCol() {
+    if (_hasPhoneCol !== null) return Promise.resolve(_hasPhoneCol);
+    return sel('orders', 'select=customer_phone&limit=1').then(function () {
+      _hasPhoneCol = true;
+      return true;
+  }).catch(function (e) {
+      _hasPhoneCol = !/customer_phone/i.test(String((e && e.message) || ''));
+      return _hasPhoneCol;
     });
   }
 
@@ -1842,6 +1861,7 @@
         cashChange: Number(b.cashChange) || 0,
         paymentReference: b.paymentReference || '',
         cashier: b.cashier || 'Kasir 1', status: 'completed',
+        customerName: b.customerName || null, customerPhone: b.customerPhone || null,
         shiftId: b.shiftId || null, offline: true, clientRef: clientRef
       }
     };
