@@ -9,7 +9,8 @@
 <script>
   window.__mykitchenOutletKey = 'mykitchen_kitchen_outlet_id';
 </script>
-<script src="api-supabase.js?v=20261003z"></script>
+<script src="api-supabase.js?v=20261004a"></script>
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 <style>
   body { font-family: 'Karla', system-ui, sans-serif; }
   .font-display { font-family: 'Playfair Display SC', Georgia, serif; }
@@ -74,6 +75,7 @@
     <div class="mr-auto">
       <h1 class="font-display text-lg sm:text-xl font-black text-amber-400 leading-none">DAPUR</h1>
       <p id="kitchen-outlet-name" class="text-xs text-stone-400 font-semibold">—</p>
+      <span id="rt-indicator" class="text-[10px] font-black px-2 py-0.5 rounded-full bg-stone-600 text-stone-300">○ POLLING</span>
     </div>
     <button onclick="crewLogout()" id="crew-badge" class="hidden items-center gap-1.5 px-3 py-2 rounded-xl bg-amber-900/50 border border-amber-700 text-amber-200 text-sm font-black" title="Ganti kru">🧑‍🍳 <span id="crew-name">—</span></button>
     <div id="clock" class="hidden sm:block font-mono text-lg font-bold text-stone-300 tabular-nums">--:--:--</div>
@@ -193,8 +195,38 @@
       document.getElementById('kitchen-outlet-name').textContent = o ? o.name : oid;
     } catch (e) {}
     loadKitchen(true);
-    setInterval(() => loadKitchen(false), 15000);
+    setupRealtime();
+    // Fallback: polling 30 dtk bila realtime putus
+    setInterval(() => loadKitchen(false), 30000);
     setInterval(tickTimers, 30000);
+  }
+  let rtChannel = null;
+  let rtOk = false;
+  function setupRealtime() {
+    try {
+      if (typeof supabase === 'undefined') return;
+      const oid = localStorage.getItem('mykitchen_kitchen_outlet_id');
+      if (!oid) return;
+      const url = window.__supaUrl || null;
+      const key = window.__supaAnonKey || null;
+      if (!url || !key) return;
+      const client = supabase.createClient(url, key);
+      rtChannel = client.channel('kds-' + oid)
+        .on('postgres_changes',
+          { event: '*', schema: 'public', table: 'orders', filter: 'outlet_id=eq.' + oid },
+          (payload) => {
+            clearTimeout(window._rtDeb);
+            window._rtDeb = setTimeout(() => loadKitchen(false), 800);
+          })
+        .subscribe((status) => {
+          rtOk = (status === 'SUBSCRIBED');
+          const ind = document.getElementById('rt-indicator');
+          if (ind) {
+            ind.textContent = rtOk ? '● LIVE' : '○ POLLING';
+            ind.className = 'text-[10px] font-black px-2 py-0.5 rounded-full ' + (rtOk ? 'bg-emerald-500 text-white' : 'bg-stone-600 text-stone-300');
+          }
+        });
+    } catch (e) {}
   }
   function lockKitchenOutlet() {
     const v = document.getElementById('lock-outlet-select').value; if (!v) return;
