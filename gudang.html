@@ -1,0 +1,631 @@
+<!DOCTYPE html>
+<html lang="id">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Gudang Stok — My Kitchen</title>
+<script src="https://cdn.tailwindcss.com"></script>
+<script>
+tailwind.config = {
+  theme: { extend: {
+    colors: { brand: '#DC2626', branddark: '#B91C1C', gold: '#A16207', maroon: '#450A0A' },
+    fontFamily: { display: ['"Playfair Display SC"', 'serif'], sans: ['Karla', 'sans-serif'] }
+  }}
+};
+</script>
+<link href="https://fonts.googleapis.com/css2?family=Playfair+Display+SC:wght@700;900&family=Karla:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+<script src="https://unpkg.com/lucide@latest"></script>
+<script src="api-supabase.js?v=20261004d"></script>
+<style>
+  body { font-family: 'Karla', sans-serif; background: #FEF2F2; }
+  .font-display { font-family: 'Playfair Display SC', serif; }
+  .tab-btn.active { background: #450A0A; color: #fff; }
+  ::-webkit-scrollbar { width: 6px; height: 6px; }
+  ::-webkit-scrollbar-track { background: transparent; }
+  ::-webkit-scrollbar-thumb { background: #d6d3d1; border-radius: 3px; }
+</style>
+</head>
+<body class="min-h-screen">
+
+<!-- LOCK SCREEN -->
+<div id="lock-screen" class="min-h-screen flex items-center justify-center p-4">
+  <div class="w-full max-w-sm bg-white rounded-3xl p-8 shadow-xl border border-stone-200 text-center">
+    <div class="text-5xl mb-4">📦</div>
+    <h1 class="font-display text-2xl font-black text-maroon mb-1">GUDANG STOK</h1>
+    <p class="text-xs text-stone-500 mb-6">Pilih outlet untuk mengelola stok</p>
+    <select id="lock-outlet-select" class="w-full px-4 py-3 rounded-2xl border-2 border-stone-200 text-sm font-bold focus:border-brand focus:outline-none mb-4">
+      <option value="">-- Pilih Outlet --</option>
+    </select>
+    <button onclick="lockGudang()" class="w-full py-3 rounded-2xl bg-brand hover:bg-branddark text-white font-extrabold text-sm transition-colors">Masuk Gudang</button>
+    <p class="text-[10px] text-stone-400 mt-4">Butuh login portal (Owner / Manager) terlebih dahulu</p>
+  </div>
+</div>
+
+<!-- MAIN -->
+<div id="main-screen" class="hidden">
+  <!-- HEADER -->
+  <header class="sticky top-0 z-40 bg-maroon text-white shadow-lg">
+    <div class="max-w-[1400px] mx-auto px-4 py-3">
+      <div class="flex items-center gap-3">
+        <div class="text-3xl">📦</div>
+        <div class="mr-auto">
+          <h1 class="font-display text-lg font-black text-amber-400 leading-none">GUDANG</h1>
+          <p id="gudang-outlet-name" class="text-xs text-stone-300 font-semibold">—</p>
+        </div>
+        <span id="gudang-user" class="hidden sm:block text-xs font-bold bg-white/10 px-3 py-1.5 rounded-full"></span>
+        <button onclick="unlockGudang()" class="p-2 rounded-xl bg-white/10 hover:bg-white/20 text-xs font-bold" title="Ganti outlet">🔄</button>
+        <a href="owner.html" class="p-2 rounded-xl bg-white/10 hover:bg-white/20 text-xs font-bold" title="Portal Owner">🏠</a>
+      </div>
+      <!-- TABS -->
+      <div class="flex gap-1.5 mt-3 overflow-x-auto pb-1" id="tabs">
+        <button onclick="switchTab('dash')" data-tab="dash" class="tab-btn active shrink-0 px-3.5 py-2 rounded-xl text-xs font-bold bg-white/10 hover:bg-white/20 transition-colors">📊 Dasbor</button>
+        <button onclick="switchTab('stok')" data-tab="stok" class="tab-btn shrink-0 px-3.5 py-2 rounded-xl text-xs font-bold bg-white/10 hover:bg-white/20 transition-colors">📦 Stok</button>
+        <button onclick="switchTab('po')" data-tab="po" class="tab-btn shrink-0 px-3.5 py-2 rounded-xl text-xs font-bold bg-white/10 hover:bg-white/20 transition-colors">📥 Terima PO</button>
+        <button onclick="switchTab('transfer')" data-tab="transfer" class="tab-btn shrink-0 px-3.5 py-2 rounded-xl text-xs font-bold bg-white/10 hover:bg-white/20 transition-colors">🔄 Transfer</button>
+        <button onclick="switchTab('pasar')" data-tab="pasar" class="tab-btn shrink-0 px-3.5 py-2 rounded-xl text-xs font-bold bg-white/10 hover:bg-white/20 transition-colors">🛒 Pasar</button>
+        <button onclick="switchTab('prep')" data-tab="prep" class="tab-btn shrink-0 px-3.5 py-2 rounded-xl text-xs font-bold bg-white/10 hover:bg-white/20 transition-colors">🍲 Prep</button>
+        <button onclick="switchTab('opname')" data-tab="opname" class="tab-btn shrink-0 px-3.5 py-2 rounded-xl text-xs font-bold bg-white/10 hover:bg-white/20 transition-colors">📋 Opname</button>
+        <button onclick="switchTab('waste')" data-tab="waste" class="tab-btn shrink-0 px-3.5 py-2 rounded-xl text-xs font-bold bg-white/10 hover:bg-white/20 transition-colors">🗑️ Waste</button>
+        <button onclick="switchTab('riwayat')" data-tab="riwayat" class="tab-btn shrink-0 px-3.5 py-2 rounded-xl text-xs font-bold bg-white/10 hover:bg-white/20 transition-colors">📜 Riwayat</button>
+        <button onclick="switchTab('appr')" data-tab="appr" class="tab-btn shrink-0 px-3.5 py-2 rounded-xl text-xs font-bold bg-white/10 hover:bg-white/20 transition-colors">✅ Approval <span id="appr-badge" class="hidden ml-1 px-1.5 rounded-full bg-amber-400 text-maroon text-[10px]">0</span></button>
+      </div>
+    </div>
+  </header>
+
+  <main class="max-w-[1400px] mx-auto px-4 py-6">
+    <!-- DASBOR -->
+    <div id="tab-dash" class="tab-panel">
+      <div class="grid grid-cols-2 md:grid-cols-4 gap-4 mb-6">
+        <div class="bg-white rounded-3xl p-5 border border-stone-200 shadow-xs">
+          <div class="text-[11px] font-bold text-stone-400 uppercase">Total Bahan</div>
+          <div id="dash-total" class="text-3xl font-black text-maroon font-mono mt-1">—</div>
+        </div>
+        <div class="bg-white rounded-3xl p-5 border border-stone-200 shadow-xs">
+          <div class="text-[11px] font-bold text-stone-400 uppercase">Nilai Persediaan</div>
+          <div id="dash-value" class="text-2xl font-black text-maroon font-mono mt-1">—</div>
+        </div>
+        <div class="bg-white rounded-3xl p-5 border border-amber-200 bg-amber-50/50 shadow-xs">
+          <div class="text-[11px] font-bold text-amber-600 uppercase">⚠️ Menipis</div>
+          <div id="dash-low" class="text-3xl font-black text-amber-600 font-mono mt-1">—</div>
+        </div>
+        <div class="bg-white rounded-3xl p-5 border border-rose-200 bg-rose-50/50 shadow-xs">
+          <div class="text-[11px] font-bold text-rose-600 uppercase">🚫 Habis</div>
+          <div id="dash-out" class="text-3xl font-black text-rose-600 font-mono mt-1">—</div>
+        </div>
+      </div>
+      <div class="bg-white rounded-3xl border border-stone-200 shadow-xs overflow-hidden">
+        <div class="p-5 border-b border-stone-100">
+          <h3 class="font-extrabold text-maroon">⚠️ Perlu Perhatian</h3>
+        </div>
+        <div id="dash-alerts" class="divide-y divide-stone-100 max-h-[400px] overflow-y-auto"></div>
+      </div>
+    </div>
+
+    <!-- STOK -->
+    <div id="tab-stok" class="tab-panel hidden">
+      <div class="flex flex-col sm:flex-row gap-3 mb-4">
+        <input id="stok-search" oninput="renderStok()" placeholder="🔍 Cari bahan..." class="flex-1 px-4 py-2.5 rounded-2xl border border-stone-300 text-sm focus:border-brand focus:outline-none">
+        <select id="stok-filter" onchange="renderStok()" class="px-4 py-2.5 rounded-2xl border border-stone-300 text-sm font-bold focus:border-brand focus:outline-none">
+          <option value="">Semua</option>
+          <option value="low">Menipis</option>
+          <option value="out">Habis</option>
+          <option value="RAW_MATERIAL">Bahan Mentah</option>
+          <option value="PREP_ITEM">Bahan Olahan</option>
+          <option value="PACKAGING">Kemasan</option>
+        </select>
+        <button onclick="openAddIng()" class="px-4 py-2.5 rounded-2xl bg-brand hover:bg-branddark text-white text-sm font-bold">+ Bahan</button>
+      </div>
+      <div class="bg-white rounded-3xl border border-stone-200 shadow-xs overflow-hidden">
+        <div class="overflow-x-auto">
+          <table class="w-full text-sm">
+            <thead class="bg-stone-50 text-stone-500 text-[11px] uppercase font-bold border-b">
+              <tr><th class="text-left py-3 px-4">Bahan</th><th class="text-right py-3 px-4">Stok</th><th class="text-right py-3 px-4">HPP</th><th class="text-center py-3 px-4">Aksi</th></tr>
+            </thead>
+            <tbody id="stok-body" class="divide-y divide-stone-100"></tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+
+    <!-- TERIMA PO -->
+    <div id="tab-po" class="tab-panel hidden">
+      <div id="po-list" class="space-y-3"></div>
+    </div>
+
+    <!-- TRANSFER -->
+    <div id="tab-transfer" class="tab-panel hidden">
+      <button onclick="openTransferModal()" class="mb-4 px-4 py-2.5 rounded-2xl bg-brand hover:bg-branddark text-white text-sm font-bold">+ Transfer Baru</button>
+      <div id="transfer-list" class="bg-white rounded-3xl border border-stone-200 divide-y divide-stone-100"></div>
+    </div>
+
+    <!-- PASAR -->
+    <div id="tab-pasar" class="tab-panel hidden">
+      <button onclick="openPasarModal()" class="mb-4 px-4 py-2.5 rounded-2xl bg-brand hover:bg-branddark text-white text-sm font-bold">+ Belanja Pasar</button>
+      <div id="pasar-list" class="bg-white rounded-3xl border border-stone-200 divide-y divide-stone-100"></div>
+    </div>
+
+    <!-- PREP -->
+    <div id="tab-prep" class="tab-panel hidden">
+      <button onclick="openPrepModal()" class="mb-4 px-4 py-2.5 rounded-2xl bg-brand hover:bg-branddark text-white text-sm font-bold">+ Batch Prep</button>
+      <div id="prep-list" class="bg-white rounded-3xl border border-stone-200 divide-y divide-stone-100"></div>
+    </div>
+
+    <!-- OPNAME -->
+    <div id="tab-opname" class="tab-panel hidden">
+      <button onclick="openOpnameModal()" class="mb-4 px-4 py-2.5 rounded-2xl bg-brand hover:bg-branddark text-white text-sm font-bold">+ Opname Baru</button>
+      <div id="opname-list" class="space-y-3"></div>
+    </div>
+
+    <!-- WASTE -->
+    <div id="tab-waste" class="tab-panel hidden">
+      <button onclick="openWasteModal()" class="mb-4 px-4 py-2.5 rounded-2xl bg-brand hover:bg-branddark text-white text-sm font-bold">+ Catat Waste</button>
+      <div id="waste-list" class="bg-white rounded-3xl border border-stone-200 divide-y divide-stone-100"></div>
+    </div>
+
+    <!-- RIWAYAT -->
+    <div id="tab-riwayat" class="tab-panel hidden">
+      <div class="flex gap-3 mb-4">
+        <select id="log-filter" onchange="renderLogs()" class="px-4 py-2.5 rounded-2xl border border-stone-300 text-sm font-bold">
+          <option value="">Semua Transaksi</option>
+          <option value="IN_RESTOCK">Restock</option>
+          <option value="IN_PURCHASE">Terima PO</option>
+          <option value="IN_PASAR">Belanja Pasar</option>
+          <option value="IN_PREP">Hasil Prep</option>
+          <option value="OUT_SALE">Penjualan</option>
+          <option value="OUT_WASTE">Waste</option>
+          <option value="OUT_PREP">Pakai Prep</option>
+          <option value="OPNAME_ADJUSTMENT">Opname</option>
+          <option value="IN_TRANSFER">Transfer Masuk</option>
+          <option value="OUT_TRANSFER">Transfer Keluar</option>
+        </select>
+      </div>
+      <div id="log-list" class="bg-white rounded-3xl border border-stone-200 divide-y divide-stone-100"></div>
+    </div>
+
+    <!-- APPROVAL -->
+    <div id="tab-appr" class="tab-panel hidden">
+      <div id="appr-list" class="space-y-3"></div>
+    </div>
+  </main>
+</div>
+
+<!-- MODALS -->
+<div id="modal-wrap"></div>
+
+<script>
+let G = { outlet: null, ingredients: [], logs: [], session: null, outlets: [] };
+const $ = id => document.getElementById(id);
+const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+const rp = n => 'Rp ' + Math.round(Number(n) || 0).toLocaleString('id-ID');
+const fmtDate = iso => { try { return new Date(iso).toLocaleString('id-ID', { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' }); } catch(e) { return '-'; } };
+
+function toast(msg, type) {
+  const t = document.createElement('div');
+  t.className = 'fixed bottom-6 left-1/2 -translate-x-1/2 z-[100] px-5 py-3 rounded-2xl text-sm font-bold text-white shadow-xl ' + (type === 'error' ? 'bg-rose-600' : type === 'warn' ? 'bg-amber-500' : 'bg-emerald-600');
+  t.textContent = msg;
+  document.body.appendChild(t);
+  setTimeout(() => t.remove(), 2800);
+}
+
+// ===== INIT =====
+async function init() {
+  try {
+    const s = JSON.parse(sessionStorage.getItem('mykitchen_portal_session') || 'null');
+    if (!s || !['owner','area_manager','store_manager'].includes(s.role)) {
+      $('lock-screen').innerHTML = '<div class="w-full max-w-sm bg-white rounded-3xl p-8 shadow-xl border text-center"><div class="text-4xl mb-3">🔒</div><p class="font-bold text-maroon mb-2">Butuh login portal</p><p class="text-xs text-stone-500 mb-4">Buka Portal Owner dan login dulu sebagai Owner/Manager.</p><a href="owner.html" class="inline-block px-6 py-3 rounded-2xl bg-brand text-white font-bold text-sm">Ke Portal Owner</a></div>';
+      return;
+    }
+    G.session = s;
+    const ro = await (await fetch('/api/outlets')).json();
+    G.outlets = ro.outlets || [];
+    const allowed = s.role === 'owner' ? G.outlets : G.outlets.filter(o => (s.outletIds || []).includes(o.id));
+    $('lock-outlet-select').innerHTML = '<option value="">-- Pilih Outlet --</option>' + allowed.map(o => `<option value="${o.id}">${esc(o.name)}</option>`).join('');
+    const saved = localStorage.getItem('mykitchen_gudang_outlet_id');
+    if (saved && allowed.some(o => o.id === saved)) { $('lock-outlet-select').value = saved; lockGudang(); }
+  } catch(e) { console.error(e); }
+}
+function lockGudang() {
+  const v = $('lock-outlet-select').value;
+  if (!v) { toast('Pilih outlet dulu', 'warn'); return; }
+  G.outlet = v;
+  localStorage.setItem('mykitchen_gudang_outlet_id', v);
+  const o = G.outlets.find(x => x.id === v);
+  $('gudang-outlet-name').textContent = o ? o.name : v;
+  $('gudang-user').textContent = (G.session.name || '') + ' • ' + (G.session.role || '');
+  $('lock-screen').classList.add('hidden');
+  $('main-screen').classList.remove('hidden');
+  loadAll();
+}
+function unlockGudang() {
+  if (!confirm('Ganti outlet?')) return;
+  localStorage.removeItem('mykitchen_gudang_outlet_id');
+  location.reload();
+}
+function switchTab(name) {
+  document.querySelectorAll('.tab-btn').forEach(b => b.classList.toggle('active', b.dataset.tab === name));
+  document.querySelectorAll('.tab-panel').forEach(p => p.classList.add('hidden'));
+  $('tab-' + name).classList.remove('hidden');
+  ({ po: loadPO, transfer: loadTransfers, pasar: loadPasar, prep: loadPreps, opname: loadOpnames, waste: loadWaste, riwayat: renderLogs, appr: loadApprovals, dash: renderDash, stok: renderStok })[name]?.();
+}
+async function loadAll() {
+  await loadIngredients();
+  renderDash(); renderStok();
+  loadApprovals();
+}
+async function loadIngredients() {
+  try {
+    const r = await (await fetch('/api/owner/ingredients?outlet_id=' + G.outlet)).json();
+    G.ingredients = (r.success && r.ingredients) || [];
+    G.logs = (r.success && r.stockLogs) || [];
+  } catch(e) {}
+}
+
+// ===== DASBOR =====
+function renderDash() {
+  const list = G.ingredients;
+  $('dash-total').textContent = list.length;
+  $('dash-value').textContent = rp(list.reduce((s, i) => s + (Number(i.valuation) || 0), 0));
+  const low = list.filter(i => i.status === 'low'), out = list.filter(i => i.status === 'out_of_stock');
+  $('dash-low').textContent = low.length;
+  $('dash-out').textContent = out.length;
+  const alerts = [...out.map(i => ({...i, lv: 2})), ...low.map(i => ({...i, lv: 1}))];
+  $('dash-alerts').innerHTML = alerts.length ? alerts.map(i => `
+    <div class="p-4 flex items-center gap-3">
+      <div class="text-2xl">${i.lv === 2 ? '🚫' : '⚠️'}</div>
+      <div class="flex-1"><div class="font-bold text-sm text-maroon">${esc(i.name)}</div>
+      <div class="text-xs text-stone-500 font-mono">Sisa ${i.currentStock} ${esc(i.unit)} (min ${i.minStockAlert})</div></div>
+      <button onclick="openRestock('${i.id}')" class="px-3 py-1.5 rounded-xl bg-emerald-600 text-white text-xs font-bold">Restock</button>
+    </div>`).join('')
+    : '<div class="p-8 text-center text-stone-400 text-sm">Semua stok aman 🎉</div>';
+}
+
+// ===== STOK =====
+function renderStok() {
+  const q = ($('stok-search').value || '').toLowerCase();
+  const f = $('stok-filter').value;
+  const list = G.ingredients.filter(i => {
+    if (q && !(i.name || '').toLowerCase().includes(q)) return false;
+    if (f === 'low' && i.status !== 'low') return false;
+    if (f === 'out' && i.status !== 'out_of_stock') return false;
+    if (['RAW_MATERIAL','PREP_ITEM','PACKAGING'].includes(f) && i.itemType !== f) return false;
+    return true;
+  });
+  const typeBadge = t => t === 'PREP_ITEM' ? '<span class="ml-1 px-1.5 py-px rounded text-[9px] font-bold bg-purple-100 text-purple-700">OLAHAN</span>' : t === 'PACKAGING' ? '<span class="ml-1 px-1.5 py-px rounded text-[9px] font-bold bg-sky-100 text-sky-700">KEMASAN</span>' : '';
+  $('stok-body').innerHTML = list.map(i => `
+    <tr class="hover:bg-stone-50">
+      <td class="py-3 px-4"><div class="font-bold text-maroon text-sm">${esc(i.name)}${typeBadge(i.itemType)}</div>
+        <div class="text-[10px] text-stone-400">${rp(i.costPerUnit)}/${esc(i.unit)}</div></td>
+      <td class="py-3 px-4 text-right font-mono font-bold ${i.status === 'out_of_stock' ? 'text-rose-600' : i.status === 'low' ? 'text-amber-600' : ''}">${i.currentStock} ${esc(i.unit)}</td>
+      <td class="py-3 px-4 text-right font-mono text-xs">${rp(i.valuation)}</td>
+      <td class="py-3 px-4"><div class="flex justify-center gap-1">
+        <button onclick="openRestock('${i.id}')" class="px-2 py-1 rounded-lg bg-emerald-50 text-emerald-700 border border-emerald-200 text-[10px] font-bold">Restock</button>
+        <button onclick="openWasteModal('${i.id}')" class="px-2 py-1 rounded-lg bg-amber-50 text-amber-700 border border-amber-200 text-[10px] font-bold">Waste</button>
+      </div></td>
+    </tr>`).join('') || '<tr><td colspan="4" class="py-8 text-center text-stone-400 text-sm">Tidak ada bahan</td></tr>';
+}
+
+// ===== MODAL helper =====
+function openModal(html) {
+  $('modal-wrap').innerHTML = `<div class="fixed inset-0 z-50 flex items-center justify-center p-4 bg-maroon/80 backdrop-blur-sm" onclick="if(event.target===this)closeModal()"><div class="w-full max-w-lg bg-white rounded-3xl p-6 shadow-2xl max-h-[92vh] overflow-y-auto">${html}</div></div>`;
+  lucide.createIcons();
+}
+function closeModal() { $('modal-wrap').innerHTML = ''; }
+function modalHead(icon, title, sub) {
+  return `<div class="flex items-center justify-between pb-3 border-b border-stone-100 mb-4">
+    <div class="flex items-center gap-2.5"><div class="w-9 h-9 rounded-2xl bg-red-100 text-brand flex items-center justify-center text-xl">${icon}</div>
+    <div><h4 class="text-sm font-extrabold text-maroon">${title}</h4><span class="text-[10px] text-stone-400">${sub}</span></div></div>
+    <button onclick="closeModal()" class="p-1 rounded-full text-stone-400 hover:text-stone-700 text-xl">×</button></div>`;
+}
+function ingOptions(sel) {
+  return G.ingredients.map(i => `<option value="${i.id}" ${i.id === sel ? 'selected' : ''}>${esc(i.name)} (${i.currentStock} ${esc(i.unit)})</option>`).join('');
+}
+
+// ===== RESTOCK =====
+function openRestock(ingId) {
+  const ing = G.ingredients.find(i => i.id === ingId);
+  if (!ing) return;
+  openModal(modalHead('📥', 'Restock — ' + esc(ing.name), `Stok sekarang: ${ing.currentStock} ${esc(ing.unit)}`) + `
+    <form onsubmit="submitRestock(event,'${ing.id}')" class="space-y-3 text-sm">
+      <div><label class="font-bold text-xs">Jumlah Masuk (${esc(ing.unit)})</label>
+        <input id="rs-qty" type="number" step="any" min="0.001" required class="w-full px-3 py-2 rounded-xl border border-stone-300 font-mono font-bold focus:border-brand focus:outline-none"></div>
+      <div><label class="font-bold text-xs">Harga Beli / ${esc(ing.unit)} (Rp) — untuk HPP rata-rata</label>
+        <input id="rs-cost" type="number" min="0" placeholder="${ing.costPerUnit}" class="w-full px-3 py-2 rounded-xl border border-stone-300 font-mono focus:border-brand focus:outline-none"></div>
+      <div><label class="font-bold text-xs">Supplier</label>
+        <input id="rs-sup" type="text" value="${esc(ing.supplier || '')}" class="w-full px-3 py-2 rounded-xl border border-stone-300 focus:border-brand focus:outline-none"></div>
+      <button class="w-full py-2.5 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white font-extrabold text-sm">Simpan Restock</button>
+    </form>`);
+}
+async function submitRestock(e, ingId) {
+  e.preventDefault();
+  const r = await (await fetch('/api/owner/ingredients/restock', { method: 'POST', headers: {'Content-Type':'application/json'},
+    body: JSON.stringify({ id: ingId, addStock: parseFloat($('rs-qty').value) || 0, costPerUnit: parseFloat($('rs-cost').value) || 0, supplier: $('rs-sup').value }) })).json();
+  if (r.success) { toast('Restock tersimpan', 'ok'); closeModal(); loadIngredients().then(() => { renderDash(); renderStok(); }); }
+  else toast(r.message || 'Gagal', 'error');
+}
+
+// ===== TAMBAH BAHAN =====
+function openAddIng() {
+  openModal(modalHead('➕', 'Tambah Bahan Baru', '') + `
+    <form onsubmit="submitAddIng(event)" class="space-y-3 text-sm">
+      <div><label class="font-bold text-xs">Nama *</label><input id="ai-name" required maxlength="80" class="w-full px-3 py-2 rounded-xl border border-stone-300 focus:border-brand focus:outline-none"></div>
+      <div class="grid grid-cols-2 gap-3">
+        <div><label class="font-bold text-xs">Jenis</label><select id="ai-type" class="w-full px-3 py-2 rounded-xl border border-stone-300 focus:border-brand focus:outline-none"><option value="RAW_MATERIAL">Bahan Mentah</option><option value="PREP_ITEM">Bahan Olahan</option><option value="PACKAGING">Kemasan</option></select></div>
+        <div><label class="font-bold text-xs">Satuan</label><input id="ai-unit" value="kg" maxlength="20" class="w-full px-3 py-2 rounded-xl border border-stone-300 focus:border-brand focus:outline-none"></div>
+      </div>
+      <div class="grid grid-cols-3 gap-3">
+        <div><label class="font-bold text-xs">Stok Awal</label><input id="ai-stock" type="number" step="any" value="0" class="w-full px-3 py-2 rounded-xl border border-stone-300 font-mono focus:border-brand focus:outline-none"></div>
+        <div><label class="font-bold text-xs">Min. Alert</label><input id="ai-min" type="number" step="any" value="1" class="w-full px-3 py-2 rounded-xl border border-stone-300 font-mono focus:border-brand focus:outline-none"></div>
+        <div><label class="font-bold text-xs">HPP (Rp)</label><input id="ai-cost" type="number" value="0" class="w-full px-3 py-2 rounded-xl border border-stone-300 font-mono focus:border-brand focus:outline-none"></div>
+      </div>
+      <button class="w-full py-2.5 rounded-xl bg-brand hover:bg-branddark text-white font-extrabold text-sm">Tambah</button>
+    </form>`);
+}
+async function submitAddIng(e) {
+  e.preventDefault();
+  const r = await (await fetch('/api/owner/ingredients/add', { method: 'POST', headers: {'Content-Type':'application/json'},
+    body: JSON.stringify({ name: $('ai-name').value.trim(), itemType: $('ai-type').value, unit: $('ai-unit').value.trim(), currentStock: parseFloat($('ai-stock').value) || 0, minStockAlert: parseFloat($('ai-min').value) || 0, costPerUnit: parseFloat($('ai-cost').value) || 0 }) })).json();
+  if (r.success) { toast('Bahan ditambahkan', 'ok'); closeModal(); loadIngredients().then(() => { renderDash(); renderStok(); }); }
+  else toast(r.message || 'Gagal', 'error');
+}
+
+// ===== TERIMA PO =====
+async function loadPO() {
+  const box = $('po-list');
+  box.innerHTML = '<div class="p-8 text-center text-stone-400 text-sm">Memuat...</div>';
+  try {
+    const r = await (await fetch('/api/owner/purchase-orders?outlet_id=' + G.outlet)).json();
+    const list = ((r.success && r.pos) || []).filter(p => p.status === 'sent');
+    box.innerHTML = list.length ? list.map(p => `
+      <div class="bg-white rounded-3xl border border-stone-200 p-5 flex flex-col sm:flex-row sm:items-center gap-3">
+        <div class="flex-1"><div class="font-extrabold text-maroon text-sm">${esc(p.supplier_name || p.id)}</div>
+        <div class="text-xs text-stone-500">${(p.items || []).length} item • ${rp(p.subtotal)} • ${fmtDate(p.created_at)}</div></div>
+        <button onclick="receivePO('${p.id}')" class="px-4 py-2 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-extrabold">Terima Barang</button>
+      </div>`).join('')
+      : '<div class="bg-white rounded-3xl border p-8 text-center text-stone-400 text-sm">Tidak ada PO menunggu penerimaan.<br>Buat PO di Portal Owner → Pembelian.</div>';
+  } catch(e) { box.innerHTML = '<div class="p-8 text-center text-stone-400 text-sm">Gagal memuat.</div>'; }
+}
+async function receivePO(id) {
+  const paid = confirm('Sudah dibayar tunai? (OK = tunai, Batal = kredit/hutang)') ? 'cash' : 'credit';
+  if (!confirm('Terima semua barang PO ini? Stok akan bertambah.')) return;
+  const r = await (await fetch('/api/owner/purchase-orders/receive', { method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify({ id, paid }) })).json();
+  if (r.success) { toast('PO diterima, stok bertambah', 'ok'); loadPO(); loadIngredients().then(renderDash); }
+  else toast(r.message || 'Gagal', 'error');
+}
+
+// ===== TRANSFER =====
+function openTransferModal() {
+  const dests = G.outlets.filter(o => o.id !== G.outlet);
+  openModal(modalHead('🔄', 'Transfer Stok Antar Outlet', '') + `
+    <form onsubmit="submitTransfer(event)" class="space-y-3 text-sm">
+      <div><label class="font-bold text-xs">Outlet Tujuan *</label>
+        <select id="tr-dest" class="w-full px-3 py-2 rounded-xl border border-stone-300 focus:border-brand focus:outline-none">${dests.map(o => `<option value="${o.id}">${esc(o.name)}</option>`).join('')}</select></div>
+      <div><label class="font-bold text-xs">Bahan *</label><select id="tr-ing" class="w-full px-3 py-2 rounded-xl border border-stone-300 focus:border-brand focus:outline-none">${ingOptions()}</select></div>
+      <div><label class="font-bold text-xs">Jumlah *</label><input id="tr-qty" type="number" step="any" min="0.001" required class="w-full px-3 py-2 rounded-xl border border-stone-300 font-mono font-bold focus:border-brand focus:outline-none"></div>
+      <div><label class="font-bold text-xs">Catatan</label><input id="tr-note" maxlength="200" class="w-full px-3 py-2 rounded-xl border border-stone-300 focus:border-brand focus:outline-none"></div>
+      <button class="w-full py-2.5 rounded-xl bg-brand hover:bg-branddark text-white font-extrabold text-sm">Kirim Transfer</button>
+    </form>`);
+}
+async function submitTransfer(e) {
+  e.preventDefault();
+  const r = await (await fetch('/api/owner/transfer', { method: 'POST', headers: {'Content-Type':'application/json'},
+    body: JSON.stringify({ from_outlet_id: G.outlet, to_outlet_id: $('tr-dest').value, ingredient_id: $('tr-ing').value, qty: parseFloat($('tr-qty').value) || 0, note: $('tr-note').value }) })).json();
+  if (r.success) { toast('Transfer terkirim', 'ok'); closeModal(); loadTransfers(); loadIngredients().then(renderDash); }
+  else toast(r.message || 'Gagal', 'error');
+}
+async function loadTransfers() {
+  try {
+    const r = await (await fetch('/api/owner/transfers?outlet_id=' + G.outlet)).json();
+    const list = (r.success && r.transfers) || [];
+    $('transfer-list').innerHTML = list.length ? list.map(t => `
+      <div class="p-4 flex justify-between gap-2 text-sm">
+        <div><div class="font-bold text-maroon">${esc(t.ingredientName)} <span class="font-mono">${t.qty} ${esc(t.unit)}</span></div>
+        <div class="text-[11px] text-stone-500">${t.fromOutletId === G.outlet ? '→ ' + esc(t.toOutletName || t.toOutletId) : '← ' + esc(t.fromOutletName || t.fromOutletId)} • ${fmtDate(t.createdAt)}</div></div>
+        <div class="text-[11px] text-stone-400">${esc(t.createdBy || '')}</div>
+      </div>`).join('')
+      : '<div class="p-8 text-center text-stone-400 text-sm">Belum ada transfer.</div>';
+  } catch(e) {}
+}
+
+// ===== PASAR =====
+function openPasarModal() {
+  openModal(modalHead('🛒', 'Belanja Pasar', 'Tunai / petty cash') + `
+    <form onsubmit="submitPasar(event)" class="space-y-3 text-sm">
+      <div><label class="font-bold text-xs">Bahan *</label><select id="ps-ing" class="w-full px-3 py-2 rounded-xl border border-stone-300 focus:border-brand focus:outline-none">${ingOptions()}</select>
+        <div class="text-[11px] text-stone-400 mt-1">atau bahan baru: <input id="ps-new" maxlength="80" placeholder="Nama bahan baru" class="px-2 py-1 rounded-lg border border-stone-300 text-xs"></div></div>
+      <div class="grid grid-cols-2 gap-3">
+        <div><label class="font-bold text-xs">Jumlah *</label><input id="ps-qty" type="number" step="any" min="0.001" required class="w-full px-3 py-2 rounded-xl border border-stone-300 font-mono font-bold focus:border-brand focus:outline-none"></div>
+        <div><label class="font-bold text-xs">Total Bayar (Rp) *</label><input id="ps-cost" type="number" min="1" required class="w-full px-3 py-2 rounded-xl border border-stone-300 font-mono font-bold focus:border-brand focus:outline-none"></div>
+      </div>
+      <div><label class="font-bold text-xs">Catatan</label><input id="ps-note" maxlength="200" class="w-full px-3 py-2 rounded-xl border border-stone-300 focus:border-brand focus:outline-none"></div>
+      <button class="w-full py-2.5 rounded-xl bg-amber-600 hover:bg-amber-700 text-white font-extrabold text-sm">Simpan Belanja</button>
+    </form>`);
+}
+async function submitPasar(e) {
+  e.preventDefault();
+  const r = await (await fetch('/api/owner/pasar', { method: 'POST', headers: {'Content-Type':'application/json'},
+    body: JSON.stringify({ outlet_id: G.outlet, ingredient_id: $('ps-ing').value || undefined, ingredient_name: $('ps-new').value.trim() || undefined,
+      qty: parseFloat($('ps-qty').value) || 0, total_cost: parseFloat($('ps-cost').value) || 0, note: $('ps-note').value }) })).json();
+  if (r.success) { toast(r.needApproval ? 'Masuk antrean approval' : 'Belanja tersimpan', r.needApproval ? 'warn' : 'ok'); closeModal(); loadPasar(); loadIngredients().then(renderDash); }
+  else toast(r.message || 'Gagal', 'error');
+}
+async function loadPasar() {
+  try {
+    const r = await (await fetch('/api/owner/pasar?outlet_id=' + G.outlet)).json();
+    const list = (r.success && r.logs) || [];
+    $('pasar-list').innerHTML = list.length ? list.slice(0, 50).map(p => `
+      <div class="p-4 flex justify-between gap-2 text-sm">
+        <div><div class="font-bold text-maroon">${esc(p.ingredientName)} <span class="font-mono">${p.qty} ${esc(p.unit)}</span></div>
+        <div class="text-[11px] text-stone-500">${esc(p.buyer || '')} • ${fmtDate(p.createdAt)}</div></div>
+        <div class="font-mono font-bold text-sm">${rp(p.totalCost)}</div>
+      </div>`).join('')
+      : '<div class="p-8 text-center text-stone-400 text-sm">Belum ada belanja.</div>';
+  } catch(e) {}
+}
+
+// ===== PREP =====
+let prepRows = [];
+function openPrepModal() {
+  prepRows = [{ id: G.ingredients[0]?.id || '', qty: 0 }];
+  openModal(modalHead('🍲', 'Batch Prep Baru', '') + `
+    <form onsubmit="submitPrep(event)" class="space-y-3 text-sm">
+      <div><label class="font-bold text-xs">Hasil Jadi</label><select id="pp-out" class="w-full px-3 py-2 rounded-xl border border-stone-300 focus:border-brand focus:outline-none">${ingOptions()}</select>
+        <div class="text-[11px] text-stone-400 mt-1">atau baru: <input id="pp-new" maxlength="80" placeholder="Nama hasil baru" class="px-2 py-1 rounded-lg border border-stone-300 text-xs"></div></div>
+      <div class="grid grid-cols-2 gap-3">
+        <div><label class="font-bold text-xs">Jumlah Hasil *</label><input id="pp-qty" type="number" step="any" min="0.001" required class="w-full px-3 py-2 rounded-xl border border-stone-300 font-mono font-bold focus:border-brand focus:outline-none"></div>
+        <div><label class="font-bold text-xs">Satuan</label><input id="pp-unit" maxlength="20" placeholder="kg" class="w-full px-3 py-2 rounded-xl border border-stone-300 focus:border-brand focus:outline-none"></div>
+      </div>
+      <div><label class="font-bold text-xs">Bahan Mentah *</label><div id="pp-mats" class="space-y-2"></div>
+        <button type="button" onclick="prepAddRow()" class="mt-2 px-3 py-1.5 rounded-lg bg-stone-100 text-xs font-bold">+ Bahan</button></div>
+      <button class="w-full py-2.5 rounded-xl bg-orange-600 hover:bg-orange-700 text-white font-extrabold text-sm">Simpan Produksi</button>
+    </form>`);
+  prepRenderRows();
+}
+function prepRenderRows() {
+  $('pp-mats').innerHTML = prepRows.map((r, i) => `
+    <div class="flex gap-2"><select onchange="prepRows[${i}].id=this.value" class="flex-1 px-2 py-1.5 rounded-lg border border-stone-300 text-xs">${ingOptions(r.id)}</select>
+    <input type="number" step="any" min="0.001" value="${r.qty || ''}" oninput="prepRows[${i}].qty=this.value" placeholder="Qty" class="w-20 px-2 py-1.5 rounded-lg border border-stone-300 text-xs font-mono">
+    <button type="button" onclick="prepRows.splice(${i},1);prepRenderRows()" class="text-stone-400 px-1">×</button></div>`).join('');
+}
+function prepAddRow() { prepRows.push({ id: G.ingredients[0]?.id || '', qty: 0 }); prepRenderRows(); }
+async function submitPrep(e) {
+  e.preventDefault();
+  const mats = prepRows.filter(r => r.id && (parseFloat(r.qty) || 0) > 0).map(r => ({ ingredient_id: r.id, qty: parseFloat(r.qty) }));
+  if (!mats.length) { toast('Isi bahan mentah', 'warn'); return; }
+  const r = await (await fetch('/api/owner/prep-batch', { method: 'POST', headers: {'Content-Type':'application/json'},
+    body: JSON.stringify({ outlet_id: G.outlet, output_ingredient_id: $('pp-out').value || undefined, output_name: $('pp-new').value.trim() || undefined,
+      output_qty: parseFloat($('pp-qty').value) || 0, output_unit: $('pp-unit').value.trim(), materials: mats }) })).json();
+  if (r.success) { toast('Batch prep tersimpan', 'ok'); closeModal(); loadPreps(); loadIngredients().then(renderDash); }
+  else toast(r.message || 'Gagal', 'error');
+}
+async function loadPreps() {
+  try {
+    const r = await (await fetch('/api/owner/prep-batches?outlet_id=' + G.outlet)).json();
+    const list = (r.success && r.batches) || [];
+    $('prep-list').innerHTML = list.length ? list.slice(0, 50).map(p => `
+      <div class="p-4 text-sm"><div class="font-bold text-maroon">${esc(p.outputName)} <span class="font-mono">${p.outputQty} ${esc(p.outputUnit)}</span></div>
+      <div class="text-[11px] text-stone-500">${(p.materials || []).map(m => esc(m.name) + ' ' + m.qty).join(', ')} • ${fmtDate(p.createdAt)}</div></div>`).join('')
+      : '<div class="p-8 text-center text-stone-400 text-sm">Belum ada batch prep.</div>';
+  } catch(e) {}
+}
+
+// ===== OPNAME =====
+function openOpnameModal() {
+  openModal(modalHead('📋', 'Stock Opname', 'Isi stok fisik per bahan') + `
+    <form onsubmit="submitOpname(event)">
+      <div class="max-h-[50vh] overflow-y-auto space-y-2 mb-4">${G.ingredients.map(i => `
+        <div class="flex items-center gap-2 bg-stone-50 p-2.5 rounded-2xl border">
+          <div class="flex-1 min-w-0"><div class="font-bold text-xs truncate">${esc(i.name)}</div>
+          <div class="text-[10px] text-stone-400 font-mono">Sistem: ${i.currentStock} ${esc(i.unit)}</div></div>
+          <input type="number" step="any" min="0" value="${i.currentStock}" data-ing="${i.id}" data-sys="${i.currentStock}"
+                 oninput="const v=parseFloat(this.value);const s=parseFloat(this.dataset.sys);const d=this.parentElement.querySelector('.ov');const diff=isNaN(v)?0:Math.round((v-s)*1000)/1000;d.textContent=(diff>0?'+':'')+diff;d.className='ov w-16 text-right text-[11px] font-mono font-bold '+(diff>0?'text-emerald-600':diff<0?'text-rose-600':'text-stone-400');"
+                 class="w-24 px-2 py-1.5 rounded-xl border border-stone-300 text-xs font-mono font-bold">
+          <div class="ov w-16 text-right text-[11px] font-mono font-bold text-stone-400">0</div>
+        </div>`).join('')}</div>
+      <button class="w-full py-2.5 rounded-xl bg-sky-600 hover:bg-sky-700 text-white font-extrabold text-sm">Simpan Opname</button>
+    </form>`);
+}
+async function submitOpname(e) {
+  e.preventDefault();
+  const items = [...document.querySelectorAll('#modal-wrap [data-ing]')].map(el => ({ ingredient_id: el.dataset.ing, physical_stock: parseFloat(el.value) || 0 }));
+  if (!confirm('Simpan opname ' + items.length + ' bahan?')) return;
+  const r = await (await fetch('/api/owner/opname', { method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify({ outlet_id: G.outlet, items }) })).json();
+  if (r.success) { toast('Opname ' + r.code + ' tersimpan', 'ok'); closeModal(); loadOpnames(); loadIngredients().then(() => { renderDash(); renderStok(); }); }
+  else toast(r.message || 'Gagal', 'error');
+}
+async function loadOpnames() {
+  try {
+    const r = await (await fetch('/api/owner/opnames?outlet_id=' + G.outlet)).json();
+    const list = (r.success && r.opnames) || [];
+    $('opname-list').innerHTML = list.length ? list.slice(0, 20).map(o => {
+      const rows = (o.items || []).filter(x => Number(x.variance) !== 0);
+      return `<div class="bg-white rounded-3xl border border-stone-200 p-5">
+        <div class="flex justify-between text-sm mb-2"><span class="font-extrabold text-maroon">${esc(o.code || o.id)}</span>
+        <span class="text-[11px] text-stone-400">${fmtDate(o.createdAt)} • ${esc(o.picName)}</span></div>
+        ${rows.length ? rows.map(x => `<div class="flex justify-between text-xs py-1 border-t border-stone-100"><span>${esc(x.ingredientName)} <span class="font-mono text-stone-400">${x.systemStock}→${x.physicalStock}</span></span><span class="font-mono font-bold ${x.variance > 0 ? 'text-emerald-600' : 'text-rose-600'}">${x.variance > 0 ? '+' : ''}${x.variance} (${rp(x.varianceCost)})</span></div>`).join('') : '<div class="text-xs text-stone-400">Tidak ada selisih.</div>'}
+      </div>`;
+    }).join('')
+    : '<div class="bg-white rounded-3xl border p-8 text-center text-stone-400 text-sm">Belum ada opname.</div>';
+  } catch(e) {}
+}
+
+// ===== WASTE =====
+function openWasteModal(ingId) {
+  openModal(modalHead('🗑️', 'Catat Waste / Rusak', '') + `
+    <form onsubmit="submitWaste(event)" class="space-y-3 text-sm">
+      <div><label class="font-bold text-xs">Bahan *</label><select id="w-ing" class="w-full px-3 py-2 rounded-xl border border-stone-300 focus:border-brand focus:outline-none">${ingOptions(ingId)}</select></div>
+      <div><label class="font-bold text-xs">Jumlah Terbuang *</label><input id="w-qty" type="number" step="any" min="0.001" required class="w-full px-3 py-2 rounded-xl border border-stone-300 font-mono font-bold focus:border-brand focus:outline-none"></div>
+      <div><label class="font-bold text-xs">Alasan</label><input id="w-note" maxlength="200" placeholder="mis. basi, gosong, tumpah" class="w-full px-3 py-2 rounded-xl border border-stone-300 focus:border-brand focus:outline-none"></div>
+      <button class="w-full py-2.5 rounded-xl bg-rose-600 hover:bg-rose-700 text-white font-extrabold text-sm">Catat Waste</button>
+    </form>`);
+}
+async function submitWaste(e) {
+  e.preventDefault();
+  const r = await (await fetch('/api/owner/ingredients/waste', { method: 'POST', headers: {'Content-Type':'application/json'},
+    body: JSON.stringify({ ingredientId: $('w-ing').value, qty: parseFloat($('w-qty').value) || 0, note: $('w-note').value }) })).json();
+  if (r.success) { toast('Waste tercatat', 'ok'); closeModal(); loadWaste(); loadIngredients().then(() => { renderDash(); renderStok(); }); }
+  else toast(r.message || 'Gagal', 'error');
+}
+async function loadWaste() {
+  try {
+    const r = await (await fetch('/api/owner/ingredients?outlet_id=' + G.outlet)).json();
+    const list = ((r.success && r.wasteLogs) || []).slice(0, 50);
+    $('waste-list').innerHTML = list.length ? list.map(w => `
+      <div class="p-4 flex justify-between text-sm"><div><div class="font-bold text-maroon">${esc(w.ingredient_name || '')} <span class="font-mono">${w.qty} ${esc(w.unit || '')}</span></div>
+      <div class="text-[11px] text-stone-500">${esc(w.note || '')} • ${fmtDate(w.created_at)}</div></div>
+      <div class="font-mono text-xs text-rose-600 font-bold">${rp(w.total_loss)}</div></div>`).join('')
+      : '<div class="p-8 text-center text-stone-400 text-sm">Belum ada waste.</div>';
+  } catch(e) {}
+}
+
+// ===== RIWAYAT =====
+function renderLogs() {
+  const f = $('log-filter').value;
+  const list = G.logs.filter(l => !f || l.type === f).slice(0, 100);
+  const inTypes = ['IN_RESTOCK','IN_PURCHASE','IN_PASAR','IN_PREP','IN_TRANSFER','OPNAME_ADJUSTMENT'];
+  $('log-list').innerHTML = list.length ? list.map(l => {
+    const isIn = inTypes.includes(l.type) || (l.type === 'OPNAME_ADJUSTMENT' && Number(l.change_qty) > 0);
+    const q = Number(l.change_qty) || 0;
+    return `<div class="p-3.5 flex justify-between gap-2 text-sm">
+      <div class="min-w-0"><div class="font-bold text-xs truncate">${esc(l.ingredient_name || '')}</div>
+      <div class="text-[10px] text-stone-400">${esc(l.type || '').replace(/_/g, ' ')} • ${esc(l.reference || '')} • ${fmtDate(l.created_at)}</div>
+      ${l.note ? `<div class="text-[10px] text-stone-400 italic truncate">${esc(l.note)}</div>` : ''}</div>
+      <div class="text-right shrink-0"><div class="font-mono font-bold text-xs ${isIn ? 'text-emerald-600' : 'text-rose-600'}">${q > 0 ? '+' : ''}${q} ${esc(l.unit || '')}</div>
+      <div class="text-[10px] text-stone-400 font-mono">→ ${l.balance_qty}</div></div>
+    </div>`;
+  }).join('')
+  : '<div class="p-8 text-center text-stone-400 text-sm">Belum ada riwayat.</div>';
+}
+
+// ===== APPROVAL =====
+async function loadApprovals() {
+  try {
+    const r = await (await fetch('/api/owner/approvals')).json();
+    const list = (r.success && r.approvals) || [];
+    const badge = $('appr-badge');
+    badge.textContent = list.length;
+    badge.classList.toggle('hidden', !list.length);
+    $('appr-list').innerHTML = list.length ? list.map(a => {
+      const p = a.payload || {};
+      return `<div class="bg-white rounded-3xl border border-amber-200 p-5 flex flex-col sm:flex-row sm:items-center gap-3">
+        <div class="flex-1"><div class="font-extrabold text-maroon text-sm">${esc(p.ingredient_name || '-')} <span class="font-mono">${p.qty} ${esc(p.unit || '')}</span></div>
+        <div class="text-xs text-stone-500">${rp(a.totalCost)} • oleh ${esc(a.requestedBy)} • ${fmtDate(a.requestedAt)}</div>
+        ${p.note ? `<div class="text-[11px] text-stone-400 italic">${esc(p.note)}</div>` : ''}</div>
+        <div class="flex gap-2"><button onclick="decideAppr('${a.id}','approve')" class="px-4 py-2 rounded-xl bg-emerald-600 text-white text-xs font-extrabold">Setujui</button>
+        <button onclick="decideAppr('${a.id}','reject')" class="px-4 py-2 rounded-xl bg-stone-100 text-stone-600 text-xs font-extrabold">Tolak</button></div>
+      </div>`;
+    }).join('')
+    : '<div class="bg-white rounded-3xl border p-8 text-center text-stone-400 text-sm">Tidak ada pengajuan menunggu.</div>';
+  } catch(e) {}
+}
+async function decideAppr(id, decision) {
+  if (!confirm(decision === 'approve' ? 'Setujui? Stok akan bertambah.' : 'Tolak pengajuan?')) return;
+  const r = await (await fetch('/api/owner/approvals/decide', { method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify({ id, decision }) })).json();
+  if (r.success) { toast(r.message || 'Berhasil', 'ok'); loadApprovals(); loadIngredients().then(renderDash); }
+  else toast(r.message || 'Gagal', 'error');
+}
+
+document.addEventListener('DOMContentLoaded', init);
+lucide.createIcons();
+</script>
+</body>
+</html>
