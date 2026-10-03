@@ -2,7 +2,7 @@
 <html lang="id">
 <head>
   <script src="brand-config.js"></script>
-  <script src="api-supabase.js?v=20261003h"></script>
+  <script src="api-supabase.js?v=20261003i"></script>
   <!-- api-shim: ganti /api/* dgn localStorage (perbaikan persistensi utk hosting statis) -->
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
@@ -129,6 +129,13 @@
 
       <!-- Controls & Quick Navigation -->
       <div class="flex flex-wrap items-center gap-2">
+        <!-- Outlet Switcher -->
+        <div id="outlet-switcher-wrap" class="hidden items-center gap-1.5 bg-stone-100 p-1 rounded-xl text-xs font-bold border border-stone-200">
+          <i data-lucide="store" class="w-3.5 h-3.5 text-stone-500 ml-1.5"></i>
+          <select id="outlet-switcher" onchange="onOutletSwitch()" class="bg-transparent text-xs font-bold text-stone-700 focus:outline-none pr-1 max-w-[140px]">
+            <option value="ALL">Semua Outlet</option>
+          </select>
+        </div>
         <!-- Date Range Filter Tabs -->
         <div class="flex items-center bg-stone-100 p-1 rounded-xl text-xs font-bold border border-stone-200">
           <button onclick="setRange('today')" id="range-btn-today" class="range-btn px-3 py-1.5 rounded-lg text-stone-600 hover:text-stone-900 transition-all">Hari Ini</button>
@@ -765,6 +772,26 @@
 
     <!-- VIEW 3: PEGAWAI & SHIFT KASIR -->
     <div id="owner-view-staff" class="hidden space-y-6">
+
+      <!-- Section: Kelola Outlet -->
+      <div class="bg-white rounded-3xl p-5 sm:p-6 border border-stone-200/80 shadow-xs">
+        <div class="flex items-center justify-between mb-4">
+          <div>
+            <h3 class="text-base font-extrabold text-[#450A0A] flex items-center gap-2">
+              <i data-lucide="store" class="w-5 h-5 text-brand"></i>
+              Kelola Outlet
+            </h3>
+            <p class="text-[11px] text-stone-400 mt-0.5">Tiap outlet punya menu, stok, shift & laporan sendiri. Pilih outlet di atas untuk melihat datanya.</p>
+          </div>
+          <button onclick="openOutletModal()" class="inline-flex items-center gap-1.5 px-3.5 py-2 rounded-xl bg-brand hover:bg-brand-hover text-white text-xs font-bold shadow-xs transition-colors">
+            <i data-lucide="plus-circle" class="w-3.5 h-3.5"></i>
+            <span>+ Outlet</span>
+          </button>
+        </div>
+        <div id="outlet-list" class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
+          <p class="text-stone-400 italic text-xs">Memuat...</p>
+        </div>
+      </div>
 
       <!-- Section: Ganti PIN Owner -->
       <div class="bg-white rounded-3xl p-5 sm:p-6 border border-stone-200/80 shadow-xs">
@@ -1610,6 +1637,40 @@
     </div>
   </div>
 
+  <!-- MODAL: Tambah/Edit Outlet -->
+  <div id="outlet-modal" class="hidden fixed inset-0 z-50 flex items-center justify-center p-4 bg-[#450A0A]/80 backdrop-blur-sm">
+    <div class="w-full max-w-sm bg-white rounded-3xl p-6 shadow-2xl border border-stone-200">
+      <div class="flex items-center justify-between pb-3 border-b border-stone-100">
+        <h4 id="outlet-modal-title" class="text-sm font-extrabold text-[#450A0A] flex items-center gap-2">
+          <i data-lucide="store" class="w-4 h-4 text-brand"></i>Tambah Outlet
+        </h4>
+        <button onclick="closeOutletModal()" class="p-1 rounded-full text-stone-400 hover:text-stone-700">
+          <i data-lucide="x" class="w-4 h-4"></i>
+        </button>
+      </div>
+      <div class="mt-4 space-y-3.5 text-xs">
+        <input type="hidden" id="outlet-id">
+        <div>
+          <label class="text-xs font-bold text-stone-600 mb-1.5 block">Nama Outlet *</label>
+          <input id="outlet-name" type="text" maxlength="80" placeholder="cth: Cabang Tebet" class="w-full px-3 py-2.5 rounded-2xl border border-stone-300 text-sm focus:outline-none focus:border-brand" />
+        </div>
+        <div>
+          <label class="text-xs font-bold text-stone-600 mb-1.5 block">Alamat</label>
+          <input id="outlet-address" type="text" maxlength="200" placeholder="Jl. ..." class="w-full px-3 py-2.5 rounded-2xl border border-stone-300 text-sm focus:outline-none focus:border-brand" />
+        </div>
+        <div>
+          <label class="text-xs font-bold text-stone-600 mb-1.5 block">No. Telepon</label>
+          <input id="outlet-phone" type="text" maxlength="30" placeholder="08xx" class="w-full px-3 py-2.5 rounded-2xl border border-stone-300 text-sm focus:outline-none focus:border-brand" />
+        </div>
+        <div id="outlet-error" class="hidden bg-rose-50 border border-rose-300 rounded-2xl p-3 text-rose-700 text-[11px] font-bold"></div>
+        <div class="flex gap-2 pt-1">
+          <button type="button" onclick="closeOutletModal()" class="flex-1 px-4 py-2.5 rounded-2xl bg-stone-100 hover:bg-stone-200 text-stone-700 text-sm font-bold transition-colors">Batal</button>
+          <button type="button" onclick="submitOutletForm()" class="flex-1 px-4 py-2.5 rounded-2xl bg-brand hover:bg-brand-hover text-white text-sm font-bold transition-colors">Simpan</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
   <!-- MODAL: Struk Void -->
   <div id="void-receipt-modal" class="hidden fixed inset-0 z-50 flex items-center justify-center p-4 bg-[#450A0A]/80 backdrop-blur-sm">
     <div class="w-full max-w-sm bg-white rounded-3xl p-6 shadow-2xl border border-stone-200 max-h-[90vh] overflow-y-auto">
@@ -2091,6 +2152,7 @@
       const overlay = document.getElementById('owner-auth-overlay');
       if (isAuth === 'true') {
         overlay.classList.add('hidden');
+        loadOutlets();
         loadAnalytics();
         loadIngredients();
         fetchIngredientsSummaryBadge();
@@ -2114,6 +2176,7 @@
         if (data.success) {
           sessionStorage.setItem('mykitchen_owner_auth', 'true');
           document.getElementById('owner-auth-overlay').classList.add('hidden');
+          loadOutlets();
           loadAnalytics();
           loadIngredients();
           fetchIngredientsSummaryBadge();
@@ -3059,6 +3122,122 @@
     }
     function closeShiftDetail() {
       document.getElementById('shift-detail-modal').classList.add('hidden');
+    }
+
+    // --- Kelola Outlet (multi-outlet) ---
+    let ownerOutlets = [];
+    function getOwnerOutletId() {
+      try { return localStorage.getItem('mykitchen_outlet_id') || 'ALL'; } catch (e) { return 'ALL'; }
+    }
+    function setOwnerOutletId(id) {
+      try {
+        if (!id || id === 'ALL') localStorage.removeItem('mykitchen_outlet_id');
+        else localStorage.setItem('mykitchen_outlet_id', id);
+      } catch (e) {}
+    }
+    async function loadOutlets() {
+      try {
+        const res = await fetch('/api/outlets');
+        const data = await res.json();
+        ownerOutlets = (data.success && data.outlets) || [];
+      } catch (err) { ownerOutlets = []; }
+      renderOutletSwitcher();
+      renderOutletList();
+    }
+    function renderOutletSwitcher() {
+      const wrap = document.getElementById('outlet-switcher-wrap');
+      const sel = document.getElementById('outlet-switcher');
+      if (!wrap || !sel) return;
+      const active = ownerOutlets.filter(o => o.active);
+      if (active.length <= 1) { wrap.classList.add('hidden'); wrap.classList.remove('flex'); return; }
+      wrap.classList.remove('hidden'); wrap.classList.add('flex');
+      const cur = getOwnerOutletId();
+      sel.innerHTML = `<option value="ALL">Semua Outlet</option>` + active.map(o =>
+        `<option value="${o.id}" ${cur === o.id ? 'selected' : ''}>${escapeOwnerHtml(o.name)}</option>`
+      ).join('');
+      if (cur !== 'ALL' && !active.find(o => o.id === cur)) sel.value = 'ALL';
+    }
+    function onOutletSwitch() {
+      const v = document.getElementById('outlet-switcher').value;
+      setOwnerOutletId(v === 'ALL' ? null : v);
+      if (typeof loadAnalytics === 'function') loadAnalytics();
+      if (typeof loadIngredients === 'function') loadIngredients();
+      if (typeof loadStaffData === 'function') loadStaffData();
+      renderOutletList();
+    }
+    function renderOutletList() {
+      const box = document.getElementById('outlet-list');
+      if (!box) return;
+      if (!ownerOutlets.length) {
+        box.innerHTML = '<p class="text-stone-400 italic text-xs">Belum ada outlet. Tambahkan outlet pertama.</p>';
+        return;
+      }
+      const cur = getOwnerOutletId();
+      box.innerHTML = ownerOutlets.map(o => `
+        <div class="rounded-2xl border ${cur === o.id ? 'border-brand bg-red-50/50' : 'border-stone-200'} p-4 flex items-start justify-between gap-2">
+          <div class="min-w-0">
+            <p class="font-bold text-[#450A0A] truncate">${escapeOwnerHtml(o.name)}
+              ${!o.active ? '<span class="ml-1 px-1.5 py-0.5 rounded text-[9px] font-black bg-stone-200 text-stone-600">NONAKTIF</span>' : ''}
+              ${cur === o.id ? '<span class="ml-1 px-1.5 py-0.5 rounded text-[9px] font-black bg-brand text-white">DIPILIH</span>' : ''}
+            </p>
+            <p class="text-[11px] text-stone-400 truncate">${escapeOwnerHtml(o.address) || '—'} ${escapeOwnerHtml(o.phone) ? '• ' + escapeOwnerHtml(o.phone) : ''}</p>
+          </div>
+          <div class="flex gap-1 shrink-0">
+            <button onclick="openOutletModal('${o.id}')" class="p-1.5 rounded-lg bg-stone-100 hover:bg-stone-200 text-stone-600" title="Edit outlet"><i data-lucide="pencil" class="w-3.5 h-3.5"></i></button>
+            <button onclick="toggleOutletActive('${o.id}', ${o.active ? 'false' : 'true'})" class="p-1.5 rounded-lg bg-stone-100 hover:bg-stone-200 text-stone-600" title="${o.active ? 'Nonaktifkan' : 'Aktifkan'}"><i data-lucide="${o.active ? 'eye-off' : 'eye'}" class="w-3.5 h-3.5"></i></button>
+          </div>
+        </div>`).join('');
+      lucide.createIcons();
+    }
+    function openOutletModal(id) {
+      const o = id ? ownerOutlets.find(x => x.id === id) : null;
+      document.getElementById('outlet-modal-title').innerHTML = `<i data-lucide="store" class="w-4 h-4 text-brand"></i>${o ? 'Edit Outlet' : 'Tambah Outlet'}`;
+      document.getElementById('outlet-id').value = o ? o.id : '';
+      document.getElementById('outlet-name').value = o ? o.name : '';
+      document.getElementById('outlet-address').value = o ? o.address : '';
+      document.getElementById('outlet-phone').value = o ? o.phone : '';
+      document.getElementById('outlet-error').classList.add('hidden');
+      document.getElementById('outlet-modal').classList.remove('hidden');
+      lucide.createIcons();
+    }
+    function closeOutletModal() {
+      document.getElementById('outlet-modal').classList.add('hidden');
+    }
+    async function submitOutletForm() {
+      const id = document.getElementById('outlet-id').value;
+      const name = document.getElementById('outlet-name').value.trim();
+      const address = document.getElementById('outlet-address').value.trim();
+      const phone = document.getElementById('outlet-phone').value.trim();
+      const errBox = document.getElementById('outlet-error');
+      errBox.classList.add('hidden');
+      if (!name) { errBox.textContent = 'Nama outlet wajib diisi.'; errBox.classList.remove('hidden'); return; }
+      try {
+        const res = await fetch('/api/outlets', {
+          method: isNew ? 'POST' : 'PUT',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ id: id || undefined, name, address, phone })
+        });
+        const data = await res.json();
+        if (!res.ok || data.success !== true) throw new Error(data.message || 'Gagal simpan');
+        closeOutletModal();
+        await loadOutlets();
+        toast('Outlet berhasil disimpan.', 'success');
+      } catch (err) {
+        errBox.textContent = err.message; errBox.classList.remove('hidden');
+      }
+    }
+    async function toggleOutletActive(id, active) {
+      try {
+        const res = await fetch('/api/outlets', {
+          method: 'PUT', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ id, active })
+        });
+        const data = await res.json();
+        if (!res.ok || data.success !== true) throw new Error(data.message || 'Gagal');
+        await loadOutlets();
+      } catch (err) {
+        toast('Gagal: ' + err.message, 'error');
+      }
     }
 
     // --- Rekap kas: ringkasan dari daftar shift ---
