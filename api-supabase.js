@@ -131,7 +131,14 @@
       if (!ready) return query;
       var oid = currentOutletId();
       if (oid && oid !== 'ALL') {
-        query = (query ? query + '&' : '') + 'outlet_id=eq.' + encodeURIComponent(oid);
+        if (oid.indexOf(',') >= 0) {
+          // Multi-outlet (mis. area manager: "semua outlet saya").
+          var ids = oid.split(',').map(function (x) { return x.trim(); }).filter(Boolean);
+          if (ids.length === 1) query = (query ? query + '&' : '') + 'outlet_id=eq.' + encodeURIComponent(ids[0]);
+          else if (ids.length > 1) query = (query ? query + '&' : '') + 'outlet_id=in.(' + ids.map(encodeURIComponent).join(',') + ')';
+        } else {
+          query = (query ? query + '&' : '') + 'outlet_id=eq.' + encodeURIComponent(oid);
+        }
       }
       return query;
     });
@@ -150,7 +157,10 @@
         if (ready) {
           if (c.outlet_id === undefined || c.outlet_id === null) {
             var oid = currentOutletId();
-            c.outlet_id = (oid && oid !== 'ALL') ? oid : 'outlet-1';
+            // Kunci multi-outlet (koma) bukan outlet tunggal -> jangan asal cap;
+            // route wajib isi outlet_id eksplisit.
+            if (oid && oid !== 'ALL' && oid.indexOf(',') < 0) c.outlet_id = oid;
+            else if (!oid || oid === 'ALL') c.outlet_id = 'outlet-1';
           }
         } else {
           delete c.outlet_id;
@@ -531,7 +541,43 @@
       }).catch(serverError);
   };
 
-  /* Helper otorisasi route portal (dipakai fase 2d/2e). */
+  // 2b5. POST /api/portal/change-password — { current_password, new_password }.
+  //     Mengubah password akun sendiri (owner atau pegawai). Minimal 6 karakter.
+  routes['POST /api/portal/change-password'] = function (body) {
+    var s = getPortalSession();
+    if (!s) return Promise.resolve(unauthorized({ success: false, message: 'Belum login.' }));
+    var cur = String(body.current_password || '');
+    var nw = String(body.new_password || '');
+    if (nw.length < 6) return Promise.resolve(bad({ success: false, message: 'Password baru minimal 6 karakter.' }));
+    if (cur === nw) return Promise.resolve(bad({ success: false, message: 'Password baru sama dengan yang lama.' }));
+    function saveOwner() {
+      return makePasswordHash(nw).then(function (h) {
+        return upsertSetting('owner_password_hash', h).then(function () { return ok({ success: true }); });
+      });
+    }
+    if (s.role === 'owner') {
+      return getSetting('owner_password_hash').then(function (ph) {
+        var check = ph
+          ? verifyPassword(cur, ph)
+          : getOwnerPin().then(function (pin) { return hashPin(cur) === hashPin(pin); });
+        return Promise.resolve(check).then(function (valid) {
+          if (!valid) return unauthorized({ success: false, message: 'Password lama salah.' });
+          return saveOwner();
+        });
+      }).catch(serverError);
+    }
+    return sel('employees', 'select=password_hash&id=eq.' + encodeURIComponent(s.id) + '&limit=1', { allOutlets: true })
+      .then(function (rows) {
+        if (!rows.length || !rows[0].password_hash) return notFound({ success: false, message: 'Akun tidak ditemukan.' });
+        return verifyPassword(cur, rows[0].password_hash).then(function (valid) {
+          if (!valid) return unauthorized({ success: false, message: 'Password lama salah.' });
+          return makePasswordHash(nw).then(function (h) {
+            return upd('employees', 'id=eq.' + encodeURIComponent(s.id), { password_hash: h }, { allOutlets: true })
+              .then(function () { return ok({ success: true }); });
+          });
+        });
+      }).catch(serverError);
+  };
   function requirePortal(roles) {
     var s = getPortalSession();
     if (!s) return { ok: false, res: unauthorized({ success: false, message: 'Sesi berakhir. Silakan login lagi.' }) };
@@ -1984,17 +2030,23 @@
     }).catch(serverError);
   };
 
-  // 26c. GET /api/outlets — daftar outlet aktif.
-  //      Tabel outlets tidak ikut scoping (di luar OUTLET_TABLES).
+  // 26c. GET /api/outlets — daftar outlet. Bila ada sesi portal non-owner,
+  //      hanya outlet dalam scope-nya (tanpa sesi = POS -> semua, untuk dropdown).
   routes['GET /api/outlets'] = function () {
+    var s = getPortalSession();
     return sel('outlets', 'select=*&order=created_at.asc&limit=100').then(function (rows) {
-      return ok({ success: true, outlets: (rows || []).map(function (r) {
+      var list = (rows || []).map(function (r) {
         return {
           id: r.id, name: r.name || '', address: r.address || '',
           phone: r.phone || '', active: r.active !== false,
           createdAt: r.created_at
         };
-      })});
+      });
+      if (s && s.role !== 'owner' && s.outletIds) {
+        var ids = s.outletIds.filter(function (id) { return id !== '*'; });
+        list = list.filter(function (r) { return ids.indexOf(r.id) >= 0; });
+      }
+      return ok({ success: true, outlets: list });
     }).catch(function (e) {
       // Tabel belum ada (skema belum di-run) -> anggap 1 outlet default.
       return ok({ success: true, outlets: [{ id: 'outlet-1', name: 'Outlet 1', address: '', phone: '', active: true }] });
@@ -2002,7 +2054,10 @@
   };
 
   // 26d. POST /api/outlets — tambah outlet baru { name, address?, phone? }.
+  //      HANYA owner.
   routes['POST /api/outlets'] = function (body) {
+    var chk = requirePortal(['owner']);
+    if (!chk.ok) return Promise.resolve(chk.res);
     if (!body.name || !String(body.name).trim()) {
       return Promise.resolve(bad({ success: false, message: 'Nama outlet wajib diisi' }));
     }
@@ -2019,7 +2074,10 @@
   };
 
   // 26e. PUT /api/outlets — ubah outlet { id, name?, address?, phone?, active? }.
+  //      HANYA owner.
   routes['PUT /api/outlets'] = function (body) {
+    var chk = requirePortal(['owner']);
+    if (!chk.ok) return Promise.resolve(chk.res);
     if (!body.id) return Promise.resolve(bad({ success: false, message: 'ID outlet wajib diisi' }));
     var patch = {};
     if (body.name !== undefined) patch.name = String(body.name).trim().slice(0, 80);
