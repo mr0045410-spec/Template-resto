@@ -72,15 +72,94 @@
       });
     });
   }
-  function sel(table, query) { return sb('/' + table + (query ? '?' + query : '')); }
-  function ins(table, rows) {
+  function rawSel(table, query) { return sb('/' + table + (query ? '?' + query : '')); }
+  function rawIns(table, rows) {
     return sb('/' + table, { method: 'POST', body: rows, prefer: 'return=representation' });
   }
-  function upd(table, query, patch) {
+  function rawUpd(table, query, patch) {
     return sb('/' + table + '?' + query, { method: 'PATCH', body: patch, prefer: 'return=representation' });
   }
-  function del(table, query) {
+  function rawDel(table, query) {
     return sb('/' + table + '?' + query, { method: 'DELETE', prefer: 'return=representation' });
+  }
+
+  /* ------------------------------------------------------------------ */
+  /* MULTI-OUTLET: scoping otomatis per outlet di sel/ins/upd/del.        */
+  /* Tabel yg ikut: orders, menu_items, ingredients, shifts, employees.  */
+  /* Konteks outlet di localStorage (mykitchen_outlet_id): null = belum  */
+  /* pilih, 'ALL' = semua outlet (owner). Query internal lintas outlet   */
+  /* pakai rawSel/rawIns/rawUpd/rawDel.                                  */
+  /* Probe kolom outlet_id sekali (pola ordersHasShiftId): bila skema    */
+  /* belum di-run user, scoping nonaktif -> mode outlet tunggal lama.    */
+  /* ------------------------------------------------------------------ */
+  var OUTLET_TABLES = { orders: 1, menu_items: 1, ingredients: 1, shifts: 1, employees: 1 };
+  var _hasOutletCol = null;
+  function currentOutletId() {
+    try { return localStorage.getItem('mykitchen_outlet_id') || null; }
+    catch (e) { return null; }
+  }
+  function setOutletId(id) {
+    try {
+      if (!id) localStorage.removeItem('mykitchen_outlet_id');
+      else localStorage.setItem('mykitchen_outlet_id', id);
+    } catch (e) {}
+  }
+  function outletReady() {
+    if (_hasOutletCol !== null) return Promise.resolve(_hasOutletCol);
+    return rawSel('orders', 'select=outlet_id&limit=1').then(function () {
+      _hasOutletCol = true; return true;
+    }).catch(function () {
+      _hasOutletCol = false; return false;
+    });
+  }
+  function scopedQuery(table, query, opts) {
+    opts = opts || {};
+    if (!OUTLET_TABLES[table] || opts.allOutlets) return Promise.resolve(query);
+    return outletReady().then(function (ready) {
+      if (!ready) return query;
+      var oid = currentOutletId();
+      if (oid && oid !== 'ALL') {
+        query = (query ? query + '&' : '') + 'outlet_id=eq.' + encodeURIComponent(oid);
+      }
+      return query;
+    });
+  }
+  // sel/ins/upd/del outlet-aware. Tambahkan {allOutlets:true} sebagai argumen
+  // terakhir untuk query lintas outlet (login pegawai, laporan konsolidasi).
+  function sel(table, query, opts) {
+    return scopedQuery(table, query, opts).then(function (q) { return rawSel(table, q); });
+  }
+  function ins(table, rows, opts) {
+    opts = opts || {};
+    if (!OUTLET_TABLES[table] || opts.allOutlets) return rawIns(table, rows);
+    return outletReady().then(function (ready) {
+      var rs = rows.map(function (r) {
+        var c = Object.assign({}, r);
+        if (ready) {
+          if (c.outlet_id === undefined || c.outlet_id === null) {
+            var oid = currentOutletId();
+            c.outlet_id = (oid && oid !== 'ALL') ? oid : 'outlet-1';
+          }
+        } else {
+          delete c.outlet_id;
+        }
+        return c;
+      });
+      return rawIns(table, rs);
+    });
+  }
+  function upd(table, query, patch, opts) {
+    return scopedQuery(table, query, opts).then(function (q) {
+      return outletReady().then(function (ready) {
+        var p = Object.assign({}, patch);
+        if (!ready) delete p.outlet_id;
+        if (!OUTLET_TABLES[table] || (opts && opts.allOutlets)) return rawUpd(table, query, p);
+        return rawUpd(table, q, p);
+      });
+    });
+  }
+  function del(table, query, opts) {
+    return scopedQuery(table, query, opts).then(function (q) { return rawDel(table, q); });
   }
   function rpc(fn, args) { return sb('/rpc/' + fn, { method: 'POST', body: args }); }
 
@@ -238,6 +317,7 @@
     return {
       id: r.id, employeeId: r.employee_id, employeeName: r.employee_name || '',
       openedAt: r.opened_at, closedAt: r.closed_at || null,
+      outletId: r.outlet_id || null,
       openingCash: Number(r.opening_cash) || 0,
       expectedCash: (r.expected_cash === null || r.expected_cash === undefined) ? null : Number(r.expected_cash),
       closingCash: (r.closing_cash === null || r.closing_cash === undefined) ? null : Number(r.closing_cash),
@@ -1649,7 +1729,7 @@
     if (!body.employee_id || body.pin === undefined || body.pin === null) {
       return Promise.resolve(bad({ success: false, message: 'Pegawai dan PIN wajib diisi' }));
     }
-    return sel('employees', 'select=id,name,pin_hash,active&id=eq.' + encodeURIComponent(body.employee_id))
+    return sel('employees', 'select=id,name,pin_hash,active,outlet_id&id=eq.' + encodeURIComponent(body.employee_id), { allOutlets: true })
       .then(function (er) {
         if (!er.length || !er[0].active) {
           return unauthorized({ success: false, message: 'Pegawai tidak ditemukan atau nonaktif' });
@@ -1657,14 +1737,20 @@
         if (hashPin(String(body.pin)) !== er[0].pin_hash) {
           return unauthorized({ success: false, message: 'PIN salah!' });
         }
-        return sel('shifts', 'select=id&status=eq.open&limit=1').then(function (openRows) {
+        // Outlet shift: body > outlet pegawai > default. Cek duplikat per outlet.
+        var outletId = body.outlet_id || er[0].outlet_id || 'outlet-1';
+        return outletReady().then(function (ready) {
+          var q = 'select=id&status=eq.open&limit=1';
+          if (ready) q += '&outlet_id=eq.' + encodeURIComponent(outletId);
+          return sel('shifts', q, { allOutlets: true });
+        }).then(function (openRows) {
           if (openRows.length) {
-            return bad({ success: false, message: 'Masih ada shift yang terbuka. Tutup dulu sebelum buka shift baru.' });
+            return bad({ success: false, message: 'Outlet ini masih ada shift yang terbuka. Tutup dulu sebelum buka shift baru.' });
           }
           var opening = Math.max(0, Math.floor(Number(body.opening_cash) || 0));
           return ins('shifts', [{
             id: uid('shift'), employee_id: er[0].id, employee_name: er[0].name,
-            opening_cash: opening, status: 'open'
+            opening_cash: opening, status: 'open', outlet_id: outletId
           }]).then(function (rows) {
             return created({ success: true, shift: rowToShift(rows[0]) });
           });
@@ -1731,9 +1817,58 @@
     }).catch(serverError);
   };
 
-  // 26b. GET /api/owner/shift-detail?shift_id=xxx — rincian satu shift:
+  // 26c. GET /api/outlets — daftar outlet aktif.
+  //      Tabel outlets tidak ikut scoping (di luar OUTLET_TABLES).
+  routes['GET /api/outlets'] = function () {
+    return sel('outlets', 'select=*&order=created_at.asc&limit=100').then(function (rows) {
+      return ok({ success: true, outlets: (rows || []).map(function (r) {
+        return {
+          id: r.id, name: r.name || '', address: r.address || '',
+          phone: r.phone || '', active: r.active !== false,
+          createdAt: r.created_at
+        };
+      })});
+    }).catch(function (e) {
+      // Tabel belum ada (skema belum di-run) -> anggap 1 outlet default.
+      return ok({ success: true, outlets: [{ id: 'outlet-1', name: 'Outlet 1', address: '', phone: '', active: true }] });
+    });
+  };
+
+  // 26d. POST /api/outlets — tambah outlet baru { name, address?, phone? }.
+  routes['POST /api/outlets'] = function (body) {
+    if (!body.name || !String(body.name).trim()) {
+      return Promise.resolve(bad({ success: false, message: 'Nama outlet wajib diisi' }));
+    }
+    var id = 'outlet-' + uid('o').replace(/^o-/, '');
+    return ins('outlets', [{
+      id: id, name: String(body.name).trim().slice(0, 80),
+      address: String(body.address || '').slice(0, 200),
+      phone: String(body.phone || '').slice(0, 30),
+      active: true
+    }]).then(function (rows) {
+      var r = (rows && rows[0]) || { id: id };
+      return created({ success: true, outlet: { id: r.id, name: r.name } });
+    }).catch(serverError);
+  };
+
+  // 26e. PUT /api/outlets — ubah outlet { id, name?, address?, phone?, active? }.
+  routes['PUT /api/outlets'] = function (body) {
+    if (!body.id) return Promise.resolve(bad({ success: false, message: 'ID outlet wajib diisi' }));
+    var patch = {};
+    if (body.name !== undefined) patch.name = String(body.name).trim().slice(0, 80);
+    if (body.address !== undefined) patch.address = String(body.address).slice(0, 200);
+    if (body.phone !== undefined) patch.phone = String(body.phone).slice(0, 30);
+    if (body.active !== undefined) patch.active = Boolean(body.active);
+    if (!Object.keys(patch).length) return Promise.resolve(bad({ success: false, message: 'Tidak ada perubahan' }));
+    return upd('outlets', 'id=eq.' + encodeURIComponent(body.id), patch).then(function (rows) {
+      if (!rows || !rows.length) return notFound({ success: false, message: 'Outlet tidak ditemukan' });
+      return ok({ success: true });
+    }).catch(serverError);
+  };
   //      info shift + daftar order dalam rentang shift + ringkasan
   //      (omset, tunai/QRIS, diskon, void, refund).
+  // 26b. GET /api/owner/shift-detail?shift_id=xxx — rincian satu shift:
+  //      info shift + daftar order dalam rentang shift + ringkasan
   routes['GET /api/owner/shift-detail'] = function (body, query) {
     var shiftId = query && query.shift_id;
     if (!shiftId) return Promise.resolve(bad({ success: false, message: 'shift_id wajib diisi' }));
