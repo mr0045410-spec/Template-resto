@@ -304,6 +304,43 @@
   }
   // Throw khusus untuk pelanggaran scope di dalam promise chain menu.
   function menuForbidden(msg) { throw { status: 403, menuScope: true, message: msg || 'Menu di luar wewenang Anda.' }; }
+  // Konteks outlet tunggal (filter portal 1 outlet / perangkat POS).
+  // null = semua/multi outlet -> berlaku global.
+  function menuSingleOutlet() {
+    var oid = null;
+    try { oid = currentOutletId(); } catch (e) {}
+    if (!oid || oid === 'ALL' || oid.indexOf(',') >= 0) return null;
+    return oid;
+  }
+  var _hasStockOverride = null;
+  function stockOverrideReady() {
+    if (_hasStockOverride !== null) return Promise.resolve(_hasStockOverride);
+    return rawSel('menu_outlet_stock', 'select=menu_id&limit=1').then(function () {
+      _hasStockOverride = true; return true;
+    }).catch(function () { _hasStockOverride = false; return false; });
+  }
+  // Terapkan override stok per outlet ke daftar menu (hanya menu pusat).
+  function applyStockOverrides(items, outletId) {
+    if (!outletId) return Promise.resolve(items);
+    return stockOverrideReady().then(function (ready) {
+      if (!ready) return items;
+      return rawSel('menu_outlet_stock', 'select=menu_id,stock_qty,in_stock&outlet_id=eq.' + encodeURIComponent(outletId))
+        .then(function (rows) {
+          if (!rows || !rows.length) return items;
+          var map = {};
+          rows.forEach(function (r) { map[r.menu_id] = r; });
+          return items.map(function (m) {
+            var ov = map[m.id];
+            if (ov && m.isCentral) {
+              m.stockQty = ov.stock_qty;
+              m.inStock = !!ov.in_stock;
+              m.stockOverridden = true;
+            }
+            return m;
+          });
+        }).catch(function () { return items; });
+    });
+  }
   function menuItemToRow(m) {
     return {
       id: m.id, name: m.name, category: m.category, tag: m.tag || '',
@@ -654,7 +691,10 @@
   // 1. GET /api/menu
   routes['GET /api/menu'] = function () {
     return menuScopeSel('select=*&order=sort_order.asc,created_at.asc').then(function (rows) {
-      return ok({ success: true, data: { categories: SEED_CATEGORIES, menuItems: rows.map(rowToMenuItem) } });
+      var items = rows.map(rowToMenuItem);
+      return applyStockOverrides(items, menuSingleOutlet()).then(function (merged) {
+        return ok({ success: true, data: { categories: SEED_CATEGORIES, menuItems: merged } });
+      });
     }).catch(serverError);
   };
 
@@ -891,7 +931,26 @@
       if (!menuScopeOk(chk.session, r)) return Promise.resolve(forbidden({ success: false, message: 'Menu di luar wewenang Anda.' }));
       var inStock = typeof body.inStock === 'boolean' ? body.inStock : !r.in_stock;
       var stockQty = inStock ? (r.stock_qty > 0 ? r.stock_qty : 20) : 0;
-      // Menu pusat: stoknya global (berlaku semua outlet).
+      var singleOid = (!r.outlet_id) ? menuSingleOutlet() : null;
+      if (singleOid) {
+        // Menu pusat + konteks 1 outlet -> stok khusus outlet ini saja.
+        return stockOverrideReady().then(function (ready) {
+          if (!ready) return Promise.resolve(serverError({ success: false, message: 'Tabel menu_outlet_stock belum ada.' }));
+          var ovRow = { menu_id: r.id, outlet_id: singleOid, stock_qty: stockQty, in_stock: inStock, updated_at: new Date().toISOString() };
+          return rawSel('menu_outlet_stock', 'select=menu_id&menu_id=eq.' + encodeURIComponent(r.id) + '&outlet_id=eq.' + encodeURIComponent(singleOid))
+            .then(function (ex) {
+              var op = ex.length
+                ? rawUpd('menu_outlet_stock', 'menu_id=eq.' + encodeURIComponent(r.id) + '&outlet_id=eq.' + encodeURIComponent(singleOid), { stock_qty: stockQty, in_stock: inStock, updated_at: ovRow.updated_at })
+                : rawIns('menu_outlet_stock', [ovRow]);
+              return op.then(function () {
+                var item = rowToMenuItem(r);
+                item.stockQty = stockQty; item.inStock = inStock; item.stockOverridden = true;
+                return ok({ success: true, item: item });
+              });
+            });
+        }).catch(serverError);
+      }
+      // Menu khusus outlet / konteks semua outlet -> ubah global.
       var o = r.outlet_id ? undefined : { allOutlets: true };
       return upd('menu_items', 'id=eq.' + encodeURIComponent(body.id),
         { in_stock: inStock, stock_qty: stockQty, updated_at: new Date().toISOString() }, o)
@@ -907,13 +966,39 @@
       if (!rows.length) return notFound({ success: false, message: 'Item tidak ditemukan' });
       var r = rows[0];
       if (!menuScopeOk(chk.session, r)) return Promise.resolve(forbidden({ success: false, message: 'Menu di luar wewenang Anda.' }));
-      var stockQty = r.stock_qty;
-      if (typeof body.stockQty === 'number') stockQty = Math.max(0, Math.floor(body.stockQty));
-      else if (typeof body.delta === 'number') stockQty = Math.max(0, Math.floor(stockQty + body.delta));
-      var o2 = r.outlet_id ? undefined : { allOutlets: true };
-      return upd('menu_items', 'id=eq.' + encodeURIComponent(body.id),
-        { stock_qty: stockQty, in_stock: stockQty > 0, updated_at: new Date().toISOString() }, o2)
-        .then(function (u) { return ok({ success: true, item: rowToMenuItem(u[0]) }); });
+      var curQty = r.stock_qty;
+      var singleOid2 = (!r.outlet_id) ? menuSingleOutlet() : null;
+      var effQty = curQty, effStock = r.in_stock;
+      var readOv = Promise.resolve(null);
+      if (singleOid2) {
+        readOv = stockOverrideReady().then(function (ready) {
+          if (!ready) return null;
+          return rawSel('menu_outlet_stock', 'select=stock_qty,in_stock&menu_id=eq.' + encodeURIComponent(r.id) + '&outlet_id=eq.' + encodeURIComponent(singleOid2))
+            .then(function (ex) { return ex.length ? ex[0] : null; }).catch(function () { return null; });
+        });
+      }
+      return readOv.then(function (ov) {
+        if (ov) { effQty = ov.stock_qty; effStock = !!ov.in_stock; }
+        var stockQty = effQty;
+        if (typeof body.stockQty === 'number') stockQty = Math.max(0, Math.floor(body.stockQty));
+        else if (typeof body.delta === 'number') stockQty = Math.max(0, Math.floor(stockQty + body.delta));
+        var newInStock = stockQty > 0;
+        if (singleOid2) {
+          var ovRow2 = { menu_id: r.id, outlet_id: singleOid2, stock_qty: stockQty, in_stock: newInStock, updated_at: new Date().toISOString() };
+          var op2 = ov
+            ? rawUpd('menu_outlet_stock', 'menu_id=eq.' + encodeURIComponent(r.id) + '&outlet_id=eq.' + encodeURIComponent(singleOid2), { stock_qty: stockQty, in_stock: newInStock, updated_at: ovRow2.updated_at })
+            : rawIns('menu_outlet_stock', [ovRow2]);
+          return op2.then(function () {
+            var item = rowToMenuItem(r);
+            item.stockQty = stockQty; item.inStock = newInStock; item.stockOverridden = true;
+            return ok({ success: true, item: item });
+          });
+        }
+        var o2 = r.outlet_id ? undefined : { allOutlets: true };
+        return upd('menu_items', 'id=eq.' + encodeURIComponent(body.id),
+          { stock_qty: stockQty, in_stock: newInStock, updated_at: new Date().toISOString() }, o2)
+          .then(function (u) { return ok({ success: true, item: rowToMenuItem(u[0]) }); });
+      });
     }).catch(serverError);
   };
 
