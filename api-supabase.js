@@ -26,6 +26,8 @@
   /* ------------------------------------------------------------------ */
   var SUPABASE_URL = 'https://abvhunhtlzskctkyiysh.supabase.co'; // project My Kitchen
   var SUPABASE_ANON_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImFidmh1bmh0bHpza2N0a3lpeXNoIiwicm9sZSI6ImFub24iLCJpYXQiOjE3OTA5NTA4NDksImV4cCI6MjEwNjUyNjg0OX0.UICRhhx5IceLFecQVR-XCNbit9SrOS_EqIhjs1I_ChI';
+  // Expose utk Supabase Realtime di dapur.html / halaman lain
+  try { window.__supaUrl = SUPABASE_URL; window.__supaAnonKey = SUPABASE_ANON_KEY; } catch (e) {}
 
   var nativeFetch = window.fetch.bind(window);
   var API = SUPABASE_URL + '/rest/v1';
@@ -1577,11 +1579,13 @@
                 var ops = [];
                 var logs = [];
                 var ingFinal = {}; // id bahan -> stok akhir (satu PATCH per bahan, anti race)
+                var ordChannel = orderTypeToChannel(body.orderType);
                 body.items.forEach(function (orderItem) {
                   var qtyBought = Number(orderItem.qty) || 1;
                   (recipeMap[orderItem.id] || []).forEach(function (rec) {
                     var ing = ingMap[rec.ingredientId];
                     if (!ing) return;
+                    if (!recipeAppliesToChannel(rec, ordChannel)) return;
                     var deduction = (Number(rec.amount) || 0) * qtyBought;
                     var nb = Math.max(0, Math.round((Number(ing.current_stock) - deduction) * 1000) / 1000);
                     ing.current_stock = nb; // untuk item berikutnya yg pakai bahan sama
@@ -2057,7 +2061,7 @@
               // Meja kembali free setelah bayar (non-fatal)
               var tbl = String(o.table_or_customer || '').replace(/^Meja\s+/i, '');
               setTableFree(o.outlet_id, tbl).catch(function () {});
-              return deductStockForOrder(pid, o.items || []);
+              return deductStockForOrder(pid, o.items || [], orderTypeToChannel(o.order_type));
             })
             .then(function () {
               return sel('orders', 'select=*&id=eq.' + encodeURIComponent(pid) + '&limit=1', { allOutlets: true });
@@ -2073,7 +2077,8 @@
   };
 
   // Helper: potong stok menu + bahan utk order yg sudah ada (dipakai checkout-pending).
-  function deductStockForOrder(orderId, items) {
+  function deductStockForOrder(orderId, items, orderChannel) {
+    orderChannel = orderChannel || 'dine_in';
     var ids = items.map(function (i) { return i.id; }).filter(Boolean);
     if (!ids.length) return Promise.resolve();
     return sel('menu_items', 'select=id,stock_qty&id=in.(' + ids.map(encodeURIComponent).join(',') + ')', { allOutlets: true })
@@ -2117,6 +2122,7 @@
               (recipeMap[orderItem.id] || []).forEach(function (rec) {
                 var ing = ingMap[rec.ingredientId];
                 if (!ing) return;
+                if (!recipeAppliesToChannel(rec, orderChannel)) return;
                 var deduction = (Number(rec.amount) || 0) * qtyBought;
                 var nb = Math.max(0, Math.round((Number(ing.current_stock) - deduction) * 1000) / 1000);
                 ing.current_stock = nb;
@@ -2884,6 +2890,29 @@
     }).catch(serverError);
   };
 
+  // Helper: apakah bahan resep dipotong utk channel ini?
+  // rec.channel kosong = semua channel; terisi = hanya channel tsb.
+  function recipeAppliesToChannel(rec, orderChannel) {
+    if (!rec.channel) return true;
+    return rec.channel === orderChannel;
+  }
+  function orderTypeToChannel(orderType) {
+    if (orderType === 'takeaway') return 'takeaway';
+    if (orderType === 'delivery') return 'delivery';
+    return 'dine_in';
+  }
+
+  // Helper: HPP rata-rata bergerak (Weighted Average Cost).
+  function calcWAC(oldStock, oldCost, inQty, inCost) {
+    oldStock = Number(oldStock) || 0;
+    oldCost = Number(oldCost) || 0;
+    inQty = Number(inQty) || 0;
+    inCost = Number(inCost) || 0;
+    if (inQty <= 0) return Math.round(oldCost);
+    if (oldStock <= 0) return Math.round(inCost);
+    return Math.round((oldStock * oldCost + inQty * inCost) / (oldStock + inQty));
+  }
+
   // 15. POST /api/owner/ingredients/restock
   routes['POST /api/owner/ingredients/restock'] = function (body) {
     var chk = requirePortal(ROLE_ALL_MGR);
@@ -2894,7 +2923,9 @@
       var addQty = Number(body.addStock) || 0;
       var nb = Math.round(((Number(r.current_stock) || 0) + addQty) * 1000) / 1000;
       var patch = { current_stock: nb };
-      if (body.costPerUnit && Number(body.costPerUnit) > 0) patch.cost_per_unit = Number(body.costPerUnit);
+      if (body.costPerUnit && Number(body.costPerUnit) > 0) {
+        patch.cost_per_unit = calcWAC(r.current_stock, r.cost_per_unit, addQty, Number(body.costPerUnit));
+      }
       if (body.supplier) patch.supplier = body.supplier;
       var dt = formatJakartaDateTime();
       patch.last_restock = dt.date + ' ' + dt.time;
@@ -3078,6 +3109,22 @@
     }).catch(serverError);
   };
 
+  // Helper: batas nominal belanja yg butuh approval (default Rp 500.000).
+  // Setting: approval_limit_pasar. Owner bebas (tidak butuh approval).
+  function getApprovalLimit() {
+    return getSetting('approval_limit_pasar').then(function (v) {
+      var n = Number(v);
+      return (n > 0) ? n : 500000;
+    }).catch(function () { return 500000; });
+  }
+  var _hasApprTbl = null;
+  function apprTableReady() {
+    if (_hasApprTbl !== null) return Promise.resolve(_hasApprTbl);
+    return rawSel('purchase_approvals', 'select=id&limit=1').then(function () {
+      _hasApprTbl = true; return true;
+    }).catch(function () { _hasApprTbl = false; return false; });
+  }
+
   // 15d. POST /api/owner/pasar — belanja pasar tunai (petty cash).
   //     { outlet_id?, ingredient_id?, ingredient_name?, qty, unit?, total_cost?, photo?, note?, buyer? }
   //     Bisa pakai bahan yg sudah ada ATAU bahan baru (nama saja).
@@ -3112,6 +3159,10 @@
       }
       var totalCost = Math.round(Number(body.total_cost) || 0);
       var buyer = String(body.buyer || chk.session.name || '').slice(0, 60);
+      // Cek approval: non-owner di atas limit -> masuk antrean, stok belum dipotong
+      var needApprP = (chk.session.role === 'owner')
+        ? Promise.resolve(null)
+        : getApprovalLimit().then(function (lim) { return (totalCost > lim) ? lim : null; });
       var note = String(body.note || '').slice(0, 200);
       var unit = String(body.unit || '').slice(0, 20);
       // Cari / buat bahan di outlet ini
@@ -3137,9 +3188,32 @@
             return rawIns('ingredients', [row]).then(function (nr) { return nr[0]; });
           });
       }
-      return findOrCreate().then(function (ing) {
+      return needApprP.then(function (lim) {
+        if (lim) {
+          // Masuk antrean approval — stok BELUM dipotong
+          return apprTableReady().then(function (aready) {
+            if (!aready) return bad({ success: false, message: 'Tabel purchase_approvals belum ada. Jalankan SQL dulu.' });
+            var payload = {
+              ingredient_id: body.ingredient_id || null,
+              ingredient_name: String(body.ingredient_name || ''),
+              qty: qty, unit: unit, total_cost: totalCost,
+              photo: String(body.photo || ''), note: note, buyer: buyer
+            };
+            return rawIns('purchase_approvals', [{
+              id: uid('appr'), outlet_id: outletId, type: 'pasar',
+              payload: payload, total_cost: totalCost,
+              requested_by: buyer, status: 'pending'
+            }]).then(function () {
+              return ok({ success: true, needApproval: true,
+                message: 'Belanja Rp ' + totalCost.toLocaleString('id-ID') + ' melebihi batas Rp ' + lim.toLocaleString('id-ID') + '. Menunggu persetujuan.' });
+            });
+          });
+        }
+        return findOrCreate().then(function (ing) {
         if (!ing) return bad({ success: false, message: 'Bahan tidak ditemukan / nama kosong.' });
         var nb = Math.round(((Number(ing.current_stock) || 0) + qty) * 1000) / 1000;
+        var unitCost = qty > 0 ? Math.round(totalCost / qty) : 0;
+        var wac = calcWAC(ing.current_stock, ing.cost_per_unit, qty, unitCost);
         var entry = {
           id: uid('psr'), outlet_id: outletId,
           ingredient_id: ing.id, ingredient_name: ing.name,
@@ -3147,7 +3221,7 @@
           total_cost: totalCost, photo: photo || null,
           note: note, buyer: buyer
         };
-        return upd('ingredients', 'id=eq.' + encodeURIComponent(ing.id), { current_stock: nb }, { allOutlets: true })
+        return upd('ingredients', 'id=eq.' + encodeURIComponent(ing.id), { current_stock: nb, cost_per_unit: wac }, { allOutlets: true })
           .then(function () { return rawIns('pasar_logs', [entry]); })
           .then(function () {
             return ins('stock_logs', [{
@@ -3158,7 +3232,119 @@
             }]).catch(function () {});
           })
           .then(function () { return ok({ success: true, log: entry }); });
+        }); // end findOrCreate().then
+      }); // end needApprP.then
+    }).catch(serverError);
+  };
+
+  // 15d2. GET /api/owner/approvals — antrean persetujuan belanja (owner + AM).
+  routes['GET /api/owner/approvals'] = function (body, query) {
+    var chk = requirePortal(['owner', 'area_manager']);
+    if (!chk.ok) return Promise.resolve(chk.res);
+    return apprTableReady().then(function (ready) {
+      if (!ready) return ok({ success: true, approvals: [] });
+      var q = 'select=*&status=eq.pending&order=requested_at.desc&limit=100';
+      return rawSel('purchase_approvals', q).then(function (rows) {
+        var list = (rows || []).map(function (r) {
+          return {
+            id: r.id, outletId: r.outlet_id, type: r.type,
+            payload: r.payload || {}, totalCost: Number(r.total_cost) || 0,
+            requestedBy: r.requested_by || '', requestedAt: r.requested_at,
+            status: r.status
+          };
+        });
+        // AM hanya lihat outletnya
+        if (chk.session.role !== 'owner' && chk.session.outletIds) {
+          var ids = chk.session.outletIds.filter(function (x) { return x !== '*'; });
+          list = list.filter(function (x) { return ids.indexOf(x.outletId) >= 0; });
+        }
+        return ok({ success: true, approvals: list });
       });
+    }).catch(serverError);
+  };
+
+  // 15d3. POST /api/owner/approvals/decide — { id, decision: 'approve'|'reject' }.
+  //       Approve = jalankan belanja (stok + WAC + log). Reject = tandai ditolak.
+  routes['POST /api/owner/approvals/decide'] = function (body) {
+    var chk = requirePortal(['owner', 'area_manager']);
+    if (!chk.ok) return Promise.resolve(chk.res);
+    if (!body.id) return Promise.resolve(bad({ success: false, message: 'ID wajib.' }));
+    var decision = String(body.decision || '');
+    if (decision !== 'approve' && decision !== 'reject') {
+      return Promise.resolve(bad({ success: false, message: 'Keputusan tidak valid.' }));
+    }
+    return apprTableReady().then(function (ready) {
+      if (!ready) return bad({ success: false, message: 'Tabel purchase_approvals belum ada.' });
+      return rawSel('purchase_approvals', 'select=*&id=eq.' + encodeURIComponent(body.id) + '&limit=1')
+        .then(function (rows) {
+          var a = (rows || [])[0];
+          if (!a) return notFound({ success: false, message: 'Pengajuan tidak ditemukan.' });
+          if (a.status !== 'pending') return bad({ success: false, message: 'Sudah diputuskan.' });
+          if (!sessionCanOutlet(chk.session, a.outlet_id)) {
+            return forbidden({ success: false, message: 'Outlet di luar wewenang.' });
+          }
+          var approver = (chk.session.name || chk.session.role) + '';
+          if (decision === 'reject') {
+            return rawUpd('purchase_approvals', 'id=eq.' + encodeURIComponent(a.id),
+              { status: 'rejected', approved_by: approver, approved_at: new Date().toISOString() })
+              .then(function () { return ok({ success: true, message: 'Pengajuan ditolak.' }); });
+          }
+          // APPROVE: jalankan belanja persis spt pasar langsung
+          var p = a.payload || {};
+          var qty = Number(p.qty) || 0;
+          var totalCost = Math.round(Number(a.total_cost) || 0);
+          var unit = String(p.unit || '').slice(0, 20);
+          var photo = String(p.photo || '');
+          var note = String(p.note || '').slice(0, 200);
+          var buyer = String(p.buyer || a.requested_by || '').slice(0, 60);
+          function findOrCreateAppr() {
+            if (p.ingredient_id) {
+              return sel('ingredients', 'select=*&id=eq.' + encodeURIComponent(p.ingredient_id) + '&outlet_id=eq.' + encodeURIComponent(a.outlet_id) + '&limit=1', { allOutlets: true })
+                .then(function (rr) { return rr[0] || null; });
+            }
+            var nm = String(p.ingredient_name || '').trim().slice(0, 80);
+            if (!nm) return Promise.resolve(null);
+            return sel('ingredients', 'select=*&outlet_id=eq.' + encodeURIComponent(a.outlet_id) + '&limit=500', { allOutlets: true })
+              .then(function (rr) {
+                var found = (rr || []).find(function (r) { return (r.name || '').toLowerCase() === nm.toLowerCase(); });
+                if (found) return found;
+                var row = {
+                  id: uid('ing'), name: nm, unit: unit || 'kg',
+                  current_stock: 0, min_stock_alert: 0, cost_per_unit: qty > 0 ? Math.round(totalCost / qty) : 0,
+                  outlet_id: a.outlet_id
+                };
+                return rawIns('ingredients', [row]).then(function (nr) { return nr[0]; });
+              });
+          }
+          return findOrCreateAppr().then(function (ing) {
+            if (!ing) return bad({ success: false, message: 'Bahan tidak ditemukan.' });
+            var nb = Math.round(((Number(ing.current_stock) || 0) + qty) * 1000) / 1000;
+            var unitCost = qty > 0 ? Math.round(totalCost / qty) : 0;
+            var wac = calcWAC(ing.current_stock, ing.cost_per_unit, qty, unitCost);
+            var entry = {
+              id: uid('psr'), outlet_id: a.outlet_id,
+              ingredient_id: ing.id, ingredient_name: ing.name,
+              qty: qty, unit: unit || ing.unit || '',
+              total_cost: totalCost, photo: photo || null,
+              note: note + ' (disetujui ' + approver + ')', buyer: buyer
+            };
+            return upd('ingredients', 'id=eq.' + encodeURIComponent(ing.id), { current_stock: nb, cost_per_unit: wac }, { allOutlets: true })
+              .then(function () { return rawIns('pasar_logs', [entry]); })
+              .then(function () {
+                return ins('stock_logs', [{
+                  id: uid('log'), ingredient_id: ing.id, ingredient_name: ing.name,
+                  type: 'IN_PASAR', change_qty: qty, balance_qty: nb, unit: ing.unit || '',
+                  reference: 'Belanja pasar (' + buyer + ', approved)',
+                  note: (note ? note + ' ' : '') + '(Rp ' + totalCost.toLocaleString('id-ID') + ')'
+                }]).catch(function () {});
+              })
+              .then(function () {
+                return rawUpd('purchase_approvals', 'id=eq.' + encodeURIComponent(a.id),
+                  { status: 'approved', approved_by: approver, approved_at: new Date().toISOString() });
+              })
+              .then(function () { return ok({ success: true, message: 'Disetujui, stok bertambah.' }); });
+          });
+        });
     }).catch(serverError);
   };
 
@@ -4892,11 +5078,13 @@
             ingRows.forEach(function (g) { ingMap[g.id] = g; });
             var ops = [], logs = [], restored = 0;
             var ingFinal = {}; // id bahan -> stok akhir (satu PATCH per bahan, anti race)
+            var voidChannel = orderTypeToChannel(o.order_type);
             items.forEach(function (orderItem) {
               var qtyVoid = Number(orderItem.qty) || 1;
               (recipeMap[orderItem.id] || []).forEach(function (rec) {
                 var ing = ingMap[rec.ingredientId];
                 if (!ing) return;
+                if (!recipeAppliesToChannel(rec, voidChannel)) return;
                 var back = (Number(rec.amount) || 0) * qtyVoid;
                 var nb = Math.round(((Number(ing.current_stock) || 0) + back) * 1000) / 1000;
                 ing.current_stock = nb;
