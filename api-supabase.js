@@ -2957,6 +2957,90 @@
     }).catch(serverError);
   };
 
+  // 44c. POST /api/orders/refund — { order_id, owner_pin, amount, reason, refunded_by }
+  //     Pengembalian uang TANPA membatalkan order (beda dari void):
+  //     order tetap completed, stok TIDAK dikembalikan, hanya kas keluar.
+  //     Jurnal (non-fatal): Dr 4110 Potongan Penjualan / Kr 1100 Kas (1120 bila non-tunai).
+  //     Boleh parsial; total refund kumulatif tidak boleh melebihi total order.
+  routes['POST /api/orders/refund'] = function (body) {
+    return needSettings().then(function (blocked) {
+      if (blocked) return blocked;
+      if (!body.order_id) return bad({ success: false, message: 'ID order wajib diisi' });
+      var amount = Math.round(Number(body.amount) || 0);
+      var reason = String(body.reason || '').slice(0, 200);
+      var refundedBy = String(body.refunded_by || 'Owner').slice(0, 60);
+      if (!reason) return bad({ success: false, message: 'Alasan refund wajib diisi' });
+      if (!(amount > 0)) return bad({ success: false, message: 'Nominal refund harus lebih dari Rp 0' });
+      return sel('settings', 'select=value&key=eq.owner_pin').then(function (sr) {
+        var expectedPin = sr.length ? String(sr[0].value || '') : '1234';
+        if (String(body.owner_pin || '') !== expectedPin) {
+          return json({ success: false, message: 'PIN owner salah' }, 403);
+        }
+        return sel('orders', 'select=*&id=eq.' + encodeURIComponent(body.order_id)).then(function (orows) {
+          if (!orows.length) return notFound({ success: false, message: 'Order tidak ditemukan' });
+          var o = orows[0];
+          if (o.status !== 'completed') {
+            return bad({ success: false, message: 'Hanya order completed yang bisa di-refund (status: ' + (o.status || '-') + ')' });
+          }
+          var orderTotal = Math.round(Number(o.total) || 0);
+          return sel('refund_logs', 'select=amount&order_id=eq.' + encodeURIComponent(body.order_id)).then(function (rl) {
+            var already = (rl || []).reduce(function (s, r) { return s + (Math.round(Number(r.amount)) || 0); }, 0);
+            if (already + amount > orderTotal) {
+              return bad({ success: false, message: 'Total refund melebihi total order. Sudah di-refund ' + formatRp(String(already)) + ' dari ' + formatRp(String(orderTotal)) + '.' });
+            }
+            var pm = String(o.payment_method || 'cash').toLowerCase();
+            var cashCode = pm === 'cash' ? '1100' : '1120';
+            var journalP = tryJournal({
+              entry_date: new Date().toISOString(),
+              description: 'Refund ' + o.id + ' (' + reason + ')',
+              ref_type: 'refund', ref_id: o.id, created_by: refundedBy,
+              lines: [
+                { account_code: '4110', debit: amount, kredit: 0 },
+                { account_code: cashCode, debit: 0, kredit: amount }
+              ]
+            });
+            return journalP.then(function () {
+              return ins('refund_logs', [{
+                id: uid('rf'), order_id: o.id, amount: amount,
+                reason: reason, refunded_by: refundedBy
+              }]);
+            }).then(function () {
+              return ok({ success: true, order_id: o.id, amount: amount, totalRefunded: already + amount });
+            });
+          });
+        });
+      });
+    }).catch(serverError);
+  };
+
+  // 44d. GET /api/owner/refund-logs — laporan refund untuk owner. 200 terbaru.
+  routes['GET /api/owner/refund-logs'] = function () {
+    return sel('refund_logs', 'select=*&order=created_at.desc&limit=200').then(function (logs) {
+      logs = logs || [];
+      var ids = [], seen = {};
+      logs.forEach(function (l) {
+        if (l.order_id && !seen[l.order_id]) { seen[l.order_id] = 1; ids.push(l.order_id); }
+      });
+      if (!ids.length) return ok({ success: true, refunds: [] });
+      return sel('orders', 'select=id,table_or_customer,created_at&id=in.(' +
+        ids.map(function (x) { return encodeURIComponent(x); }).join(',') + ')').then(function (orders) {
+        var byId = {};
+        (orders || []).forEach(function (o) { byId[o.id] = o; });
+        var refunds = logs.map(function (l) {
+          var o = byId[l.order_id] || {};
+          return {
+            id: l.id, orderId: l.order_id, amount: Number(l.amount) || 0,
+            reason: l.reason || '-', refundedBy: l.refunded_by || '-',
+            refundedAt: l.created_at,
+            tableOrCustomer: o.table_or_customer || '',
+            orderedAt: o.created_at || null
+          };
+        });
+        return ok({ success: true, refunds: refunds });
+      });
+    }).catch(serverError);
+  };
+
   /* ================================================================== */
   /* Export CSV / Excel                                                  */
   /* ================================================================== */
