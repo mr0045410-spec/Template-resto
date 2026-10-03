@@ -3,7 +3,7 @@
 <head>
   <script src="brand-config.js"></script>
   <script>window.__mykitchenOutletKey = 'mykitchen_owner_outlet_filter';</script>
-  <script src="api-supabase.js?v=20261003w"></script>
+  <script src="api-supabase.js?v=20261003x"></script>
   <!-- api-shim: ganti /api/* dgn localStorage (perbaikan persistensi utk hosting statis) -->
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
@@ -1948,6 +1948,21 @@
             <p class="text-[11px] text-stone-400 mt-1">Menu pusat: sekali bikin, langsung tampil di semua outlet. Menu khusus: hanya di outlet yang dipilih.</p>
           </div>
 
+          <div>
+            <label class="block font-bold text-stone-700 mb-1">Stasiun Dapur</label>
+            <input type="text" id="recipe-modal-station-input" list="station-presets" placeholder="misal: Grill"
+                   class="w-full px-3 py-2 rounded-xl border border-stone-300 font-semibold text-xs focus:border-brand focus:outline-none bg-white">
+            <datalist id="station-presets">
+              <option value="Grill"></option>
+              <option value="Fryer"></option>
+              <option value="Bar"></option>
+              <option value="Dessert"></option>
+              <option value="Panas"></option>
+              <option value="Dingin"></option>
+            </datalist>
+            <p class="text-[11px] text-stone-400 mt-1">Layar dapur bisa difilter per stasiun (Grill / Fryer / Bar).</p>
+          </div>
+
           <div class="grid grid-cols-1 sm:grid-cols-2 gap-3">
             <div>
               <label class="block font-bold text-stone-700 mb-1">Harga Jual Kasir (Rp) <span class="text-rose-500">*</span></label>
@@ -2247,7 +2262,7 @@
     function getPortalRole() { return portalSession ? portalSession.role : 'owner'; }
     function canManageMenu() { const r = getPortalRole(); return r === 'owner' || r === 'area_manager'; }
     function isOwner() { return getPortalRole() === 'owner'; }
-    const ROLE_LABEL = { owner: 'Owner', area_manager: 'Area Manager', store_manager: 'Store Manager', kasir: 'Kasir' };
+    const ROLE_LABEL = { owner: 'Owner', area_manager: 'Area Manager', store_manager: 'Store Manager', kasir: 'Kasir', dapur: 'Dapur' };
     // Tab yang boleh dibuka tiap peran
     const ROLE_TABS = {
       owner: ['finance', 'inventory', 'staff', 'accounting', 'po', 'promo'],
@@ -3459,6 +3474,7 @@
       const roleSel = document.getElementById('employee-role');
       const opts = [];
       opts.push('<option value="kasir">Kasir</option>');
+      opts.push('<option value="dapur">Dapur</option>');
       if (myRole === 'owner' || myRole === 'area_manager') opts.push('<option value="store_manager">Store Manager</option>');
       if (myRole === 'owner') opts.push('<option value="area_manager">Area Manager</option>');
       roleSel.innerHTML = opts.join('');
@@ -3527,8 +3543,9 @@
       const errEl = document.getElementById('employee-form-error');
       errEl.classList.add('hidden');
       if (!name) { errEl.textContent = 'Nama wajib diisi.'; errEl.classList.remove('hidden'); return; }
-      if (role !== 'kasir' && !id && !username) { errEl.textContent = 'Username wajib untuk peran manajer.'; errEl.classList.remove('hidden'); return; }
-      if (!id && pin.length < 4 && role === 'kasir') { errEl.textContent = 'PIN baru minimal 4 digit (dipakai buka shift).'; errEl.classList.remove('hidden'); return; }
+      const isOps = (role === 'kasir' || role === 'dapur');
+      if (!isOps && !id && !username) { errEl.textContent = 'Username wajib untuk peran manajer.'; errEl.classList.remove('hidden'); return; }
+      if (!id && pin.length < 4 && isOps) { errEl.textContent = 'PIN baru minimal 4 digit (dipakai shift / login dapur).'; errEl.classList.remove('hidden'); return; }
       if (pin && pin.length < 4) { errEl.textContent = 'PIN minimal 4 digit.'; errEl.classList.remove('hidden'); return; }
       if (password && password.length < 6) { errEl.textContent = 'Password minimal 6 karakter.'; errEl.classList.remove('hidden'); return; }
       if (!id && username && !password) { errEl.textContent = 'Password wajib untuk akun ber-username baru.'; errEl.classList.remove('hidden'); return; }
@@ -5067,6 +5084,7 @@
       document.getElementById('recipe-modal-price-input').value = '25000';
       document.getElementById('recipe-modal-img-input').value = '';
       renderMenuScopeOptions(getOwnerOutletId() && getOwnerOutletId() !== 'ALL' ? getOwnerOutletId().split(',')[0] : 'CENTRAL');
+      document.getElementById('recipe-modal-station-input').value = '';
 
       const imgEl = document.getElementById('recipe-modal-menu-img');
       if (imgEl) imgEl.src = BRAND.logo;
@@ -5125,6 +5143,7 @@
       document.getElementById('recipe-modal-is-new').value = 'false';
       document.getElementById('recipe-modal-menu-id').value = menuId;
       renderMenuScopeOptions(menu.isCentral ? 'CENTRAL' : (menu.outletId || 'CENTRAL'));
+      document.getElementById('recipe-modal-station-input').value = menu.station || '';
       document.getElementById('recipe-modal-title').textContent = 'Edit Menu & Racik Resep';
       const badge = document.getElementById('recipe-modal-mode-badge');
       if (badge) {
@@ -5337,6 +5356,7 @@
             image: image || undefined,
             isNew,
             outlet_id: document.getElementById('recipe-modal-outlet-input').value,
+            station: document.getElementById('recipe-modal-station-input').value.trim(),
             items: editingRecipeRows
           })
         });
