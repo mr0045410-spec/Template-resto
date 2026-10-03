@@ -533,7 +533,8 @@
       id: r.id, name: r.name, category: r.category, unit: r.unit,
       currentStock: stock, minStockAlert: minAlert, costPerUnit: cost,
       supplier: r.supplier, lastRestock: r.last_restock || '',
-      valuation: Math.round(stock * cost), status: status
+      valuation: Math.round(stock * cost), status: status,
+      itemType: r.item_type || 'RAW_MATERIAL'
     };
   }
 
@@ -1451,6 +1452,18 @@
         cashPaid: Number(body.cashPaid) || Number(body.total) || 0,
         cashChange: Number(body.cashChange) || 0,
         paymentReference: body.paymentReference || '',
+        // Split payment: payments = [{method, amount}]
+        _splitPayments: (function () {
+          var ps = body.payments;
+          if (!ps || !ps.length) return null;
+          var valid = ps.filter(function (p) { return p.method && (Number(p.amount) || 0) > 0; })
+            .map(function (p) { return { method: String(p.method).toLowerCase(), amount: Math.round(Number(p.amount) || 0) }; });
+          if (!valid.length) return null;
+          var sum = valid.reduce(function (s, p) { return s + p.amount; }, 0);
+          var tot = Math.round(Number(body.total) || 0);
+          if (Math.abs(sum - tot) > 1) return null; // harus pas
+          return valid;
+        })(),
         cashier: body.cashier || 'Kasir 1',
         shiftId: body.shiftId || null,
         status: 'completed',
@@ -1458,6 +1471,17 @@
         // client_ref: idempotensi sinkron offline (kolom opsional, skema bag.12)
         clientRef: body.client_ref || genClientRef()
       };
+      // Split payment: tandai + simpan rincian di paymentReference
+      if (newOrder._splitPayments) {
+        newOrder.paymentMethod = 'split';
+        newOrder.paymentReference = 'SPLIT:' + JSON.stringify(newOrder._splitPayments);
+        // cashPaid = total tunai (utk kembalian)
+        var cashPart = newOrder._splitPayments.filter(function (p) { return p.method === 'cash'; })
+          .reduce(function (s, p) { return s + p.amount; }, 0);
+        newOrder.cashPaid = cashPart;
+        newOrder.cashChange = Math.max(0, cashPart - Math.round(Number(body.total) || 0));
+        delete newOrder._splitPayments;
+      }
       // Promo/redeem dipakai: hitung ulang total di server (mirror logika kasir)
       // agar konsisten walau preview klien sedikit berbeda.
       if (pr.promo || redeemDiscount > 0) {
@@ -3743,6 +3767,12 @@
     }).catch(serverError);
   };
 
+  var VALID_ITEM_TYPES = ['RAW_MATERIAL', 'PREP_ITEM', 'PACKAGING'];
+  function normItemType(v) {
+    v = String(v || '').toUpperCase();
+    return VALID_ITEM_TYPES.indexOf(v) >= 0 ? v : 'RAW_MATERIAL';
+  }
+
   // 16. POST /api/owner/ingredients/update
   routes['POST /api/owner/ingredients/update'] = function (body) {
     var chk = requirePortal(ROLE_MGR);
@@ -3755,6 +3785,7 @@
     if (body.minStockAlert !== undefined) patch.min_stock_alert = Number(body.minStockAlert);
     if (body.costPerUnit !== undefined) patch.cost_per_unit = Number(body.costPerUnit);
     if (body.supplier !== undefined) patch.supplier = body.supplier;
+    if (body.itemType !== undefined) patch.item_type = normItemType(body.itemType);
     return upd('ingredients', 'id=eq.' + encodeURIComponent(body.id), patch).then(function (rows) {
       if (!rows.length) return notFound({ success: false, message: 'Bahan baku tidak ditemukan' });
       return ok({ success: true, ingredient: rowToIngredient(rows[0]) });
@@ -3772,7 +3803,8 @@
       id: uid('ing'), name: body.name, category: body.category || 'Tepung & Bahan Pokok',
       unit: body.unit, current_stock: Number(body.currentStock) || 0,
       min_stock_alert: Number(body.minStockAlert) || 1,
-      cost_per_unit: Number(body.costPerUnit) || 0, supplier: body.supplier || '-'
+      cost_per_unit: Number(body.costPerUnit) || 0, supplier: body.supplier || '-',
+      item_type: normItemType(body.itemType)
     }]).then(function (rows) {
       return created({ success: true, ingredient: rowToIngredient(rows[0]) });
     }).catch(serverError);
@@ -4563,8 +4595,21 @@
     var svcAmt = Math.round(Number(o.service_amount) || 0);
     var total = Math.round(Number(o.total) || 0);
     var pm = String(o.payment_method || 'cash').toLowerCase();
-    var cashCode = pm === 'cash' ? '1100' : '1120'; // tunai -> Kas, QRIS/EDC -> Kas Bank
-    var lines = [{ account_code: cashCode, debit: total, kredit: 0 }];
+    var lines = [];
+    // Split payment: debit per metode
+    if (pm === 'split' && o.payment_reference && String(o.payment_reference).indexOf('SPLIT:') === 0) {
+      try {
+        var parts = JSON.parse(String(o.payment_reference).slice(6));
+        parts.forEach(function (p) {
+          var code = (p.method === 'cash') ? '1100' : '1120';
+          lines.push({ account_code: code, debit: Math.round(p.amount) || 0, kredit: 0 });
+        });
+      } catch (e) {}
+    }
+    if (!lines.length) {
+      var cashCode = pm === 'cash' ? '1100' : '1120';
+      lines.push({ account_code: cashCode, debit: total, kredit: 0 });
+    }
     if (discount > 0) lines.push({ account_code: '4110', debit: discount, kredit: 0 });
     lines.push({ account_code: '4100', debit: 0, kredit: subtotal });
     if (taxAmt > 0) lines.push({ account_code: '2120', debit: 0, kredit: taxAmt });
@@ -5118,10 +5163,15 @@
             items.forEach(function (it) {
               var ing = ingMap[it.ingredient_id];
               if (!ing) return;
-              var nb = Math.round(((Number(ing.current_stock) || 0) + (Number(it.qty) || 0)) * 1000) / 1000;
+              var qty = Number(it.qty) || 0;
+              var oldStock = Number(ing.current_stock) || 0;
+              var nb = Math.round((oldStock + qty) * 1000) / 1000;
               ing.current_stock = nb;
               var patch = { current_stock: nb, last_restock: dt.date + ' ' + dt.time };
-              if (Number(it.unit_price) > 0) patch.cost_per_unit = Number(it.unit_price);
+              // WAC: harga PO dirata-rata dgn stok lama
+              if (Number(it.unit_price) > 0) {
+                patch.cost_per_unit = calcWAC(oldStock, ing.cost_per_unit, qty, Number(it.unit_price));
+              }
               ops.push(upd('ingredients', 'id=eq.' + encodeURIComponent(ing.id), patch));
               logs.push({
                 id: uid('log'), ingredient_id: ing.id, ingredient_name: ing.name,
