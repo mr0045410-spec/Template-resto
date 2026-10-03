@@ -1196,6 +1196,37 @@
   };
 
   // 7c. POST /api/kitchen/order-status — { order_id, kitchen_status }
+  // 7c2. GET /api/waiter/ready-orders — order siap antar utk waiter (?outlet_id=).
+  //      Mengembalikan order kitchen_status=ready yg belum void.
+  routes['GET /api/waiter/ready-orders'] = function (body, query) {
+    var oid = String((query && query.outlet_id) || '');
+    if (!oid) return Promise.resolve(bad({ success: false, message: 'outlet_id wajib.' }));
+    return ordersHasKitchenStatus().then(function (has) {
+      if (!has) return ok({ success: true, orders: [] });
+      var q = 'select=id,table_or_customer,items,kitchen_status,created_at,customer_name&outlet_id=eq.' + encodeURIComponent(oid) +
+        '&status=neq.voided&kitchen_status=eq.ready&order=created_at.asc&limit=50';
+      return sel('orders', q).then(function (rows) {
+        return ok({ success: true, orders: (rows || []).map(function (o) {
+          return { id: o.id, table: String(o.table_or_customer || '').replace(/^Meja\s+/i, '') || '-',
+            customer: o.customer_name || '', itemCount: Array.isArray(o.items) ? o.items.length : 0,
+            createdAt: o.created_at };
+        }) });
+      });
+    }).catch(serverError);
+  };
+  // 7c3. POST /api/waiter/mark-served — waiter tandai sudah diantar { outlet_id, order_id }.
+  routes['POST /api/waiter/mark-served'] = function (body) {
+    var oid = String(body.outlet_id || '');
+    if (!oid || !body.order_id) return Promise.resolve(bad({ success: false, message: 'Data kurang.' }));
+    return ordersHasKitchenStatus().then(function (has) {
+      if (!has) return bad({ success: false, message: 'Kolom kitchen_status belum ada.' });
+      return upd('orders', 'id=eq.' + encodeURIComponent(body.order_id) + '&outlet_id=eq.' + encodeURIComponent(oid),
+        { kitchen_status: 'served' }).then(function (u) {
+        if (!u || !u.length) return notFound({ success: false, message: 'Order tidak ditemukan.' });
+        return ok({ success: true });
+      });
+    }).catch(serverError);
+  };
   //     new -> preparing -> ready -> served. Terbuka spt POS; order wajib
   //     milik outlet perangkat ini (dicek via scope).
   routes['POST /api/kitchen/order-status'] = function (body) {
@@ -1954,7 +1985,8 @@
                 return {
                   id: t.id, areaId: t.area_id, number: t.table_number,
                   capacity: t.capacity || 4, status: t.status || 'free',
-                  currentOrderId: t.current_order_id || null
+                  currentOrderId: t.current_order_id || null,
+                  occupiedSince: t.occupied_since || null
                 };
               })
             });
@@ -2058,7 +2090,14 @@
       if (!ready) return null;
       return rawUpd('dining_tables',
         'outlet_id=eq.' + encodeURIComponent(outletId) + '&table_number=eq.' + encodeURIComponent(String(tableNumber)) + '&status=eq.free',
-        { status: 'occupied', current_order_id: orderId }).catch(function () {});
+        { status: 'occupied', current_order_id: orderId }).then(function (rows) {
+        // timer meja: isi occupied_since hanya saat pertama kali isi (non-fatal bila kolom belum ada)
+        if (rows && rows.length) {
+          rawUpd('dining_tables',
+            'outlet_id=eq.' + encodeURIComponent(outletId) + '&table_number=eq.' + encodeURIComponent(String(tableNumber)) + '&occupied_since=is.null',
+            { occupied_since: new Date().toISOString() }).catch(function () {});
+        }
+      }).catch(function () {});
     });
   }
   function setTableFree(outletId, tableNumber) {
@@ -2067,9 +2106,46 @@
       if (!ready) return null;
       return rawUpd('dining_tables',
         'outlet_id=eq.' + encodeURIComponent(outletId) + '&table_number=eq.' + encodeURIComponent(String(tableNumber)),
-        { status: 'free', current_order_id: null }).catch(function () {});
+        { status: 'free', current_order_id: null, occupied_since: null }).then(function () {
+        // occupied_since mungkin belum ada kolomnya — coba lagi tanpa kolom itu (non-fatal)
+      }).catch(function () {
+        return rawUpd('dining_tables',
+          'outlet_id=eq.' + encodeURIComponent(outletId) + '&table_number=eq.' + encodeURIComponent(String(tableNumber)),
+          { status: 'free', current_order_id: null }).catch(function () {});
+      });
     });
   }
+  // POST /api/waiter/table-status — waiter tandai meja isi/kosong/cleaning manual.
+  routes['POST /api/waiter/table-status'] = function (body) {
+    return tableTablesReady().then(function (ready) {
+      if (!ready) return bad({ success: false, message: 'Denah meja belum aktif.' });
+      var oid = String(body.outlet_id || '');
+      var st = String(body.status || '');
+      if (!oid) return bad({ success: false, message: 'outlet_id wajib.' });
+      if (['free', 'occupied', 'cleaning'].indexOf(st) < 0) {
+        return bad({ success: false, message: 'Status tidak valid.' });
+      }
+      var patch = { status: st };
+      if (st === 'free') { patch.current_order_id = null; patch.occupied_since = null; }
+      return rawUpd('dining_tables', 'id=eq.' + encodeURIComponent(body.table_id) + '&outlet_id=eq.' + encodeURIComponent(oid), patch)
+        .then(function (nr) {
+          if (!nr || !nr.length) return notFound({ success: false, message: 'Meja tidak ditemukan.' });
+          // timer: occupied_since diisi hanya bila masih kosong (pertama kali isi)
+          if (st === 'occupied') {
+            rawUpd('dining_tables', 'id=eq.' + encodeURIComponent(body.table_id) + '&occupied_since=is.null',
+              { occupied_since: new Date().toISOString() }).catch(function () {});
+          }
+          return ok({ success: true });
+        })
+        .catch(function () {
+          // fallback bila kolom occupied_since belum ada
+          var p2 = { status: st };
+          if (st === 'free') p2.current_order_id = null;
+          return rawUpd('dining_tables', 'id=eq.' + encodeURIComponent(body.table_id) + '&outlet_id=eq.' + encodeURIComponent(oid), p2)
+            .then(function () { return ok({ success: true }); });
+        });
+    }).catch(serverError);
+  };
 
   // 8c. GET /api/pos/pending-orders — daftar order QR pending utk outlet POS ini.
   routes['GET /api/pos/pending-orders'] = function () {
@@ -2085,7 +2161,158 @@
     }).catch(serverError);
   };
 
-  // 8d. POST /api/pos/checkout-pending — kasir selesaikan pembayaran order QR.
+  // 8d2. GET /api/pos/table-bills — bill per meja: order pending dikelompokkan per meja.
+  routes['GET /api/pos/table-bills'] = function () {
+    return outletReady().then(function (ready) {
+      var oid = ready ? currentOutletId() : null;
+      if (!oid || oid === 'ALL' || oid.indexOf(',') >= 0) {
+        return bad({ success: false, message: 'Kunci outlet POS dulu.' });
+      }
+      return sel('orders', 'select=id,table_or_customer,items,subtotal,tax_amount,total,created_at,customer_name&status=eq.pending&order=created_at.asc&limit=100')
+        .then(function (rows) {
+          var bills = {};
+          (rows || []).forEach(function (o) {
+            var tbl = String(o.table_or_customer || '').replace(/^Meja\s+/i, '').trim() || '-';
+            if (!bills[tbl]) bills[tbl] = { table: tbl, orders: [], total: 0, itemCount: 0, since: o.created_at };
+            bills[tbl].orders.push({
+              id: o.id, customer: o.customer_name || '',
+              items: (o.items || []).map(function (it, ix) {
+                return { idx: ix, id: it.id, name: it.name, price: it.price, qty: it.qty, note: it.note || '' };
+              }),
+              subtotal: o.subtotal, tax: o.tax_amount, total: o.total, createdAt: o.created_at
+            });
+            bills[tbl].total += Number(o.total) || 0;
+            bills[tbl].itemCount += (o.items || []).reduce(function (a, i) { return a + (Number(i.qty) || 0); }, 0);
+          });
+          var list = Object.keys(bills).map(function (k) { return bills[k]; });
+          list.sort(function (a, b) { return new Date(a.since) - new Date(b.since); });
+          return ok({ success: true, bills: list });
+        });
+    }).catch(serverError);
+  };
+
+  // 8d3. POST /api/pos/checkout-table — bayar SEMUA order pending di satu meja sekaligus.
+  //     { table, payment_method, cash_paid?, shift_id?, cashier? }
+  routes['POST /api/pos/checkout-table'] = function (body) {
+    var tbl = String(body.table || '').trim();
+    if (!tbl) return Promise.resolve(bad({ success: false, message: 'Meja tidak jelas.' }));
+    return outletReady().then(function (ready) {
+      var oid = ready ? currentOutletId() : null;
+      if (!oid || oid === 'ALL' || oid.indexOf(',') >= 0) {
+        return bad({ success: false, message: 'Kunci outlet POS dulu.' });
+      }
+      var q = 'select=*&status=eq.pending&order=created_at.asc&limit=100';
+      return sel('orders', q).then(function (rows) {
+        var mine = (rows || []).filter(function (o) {
+          return String(o.table_or_customer || '').replace(/^Meja\s+/i, '').trim() === tbl;
+        });
+        if (!mine.length) return bad({ success: false, message: 'Tidak ada tagihan terbuka di meja ' + tbl + '.' });
+        var pm = body.payment_method || 'cash';
+        var chain = Promise.resolve();
+        var paidIds = [];
+        mine.forEach(function (o) {
+          chain = chain.then(function () {
+            var patch = {
+              status: 'completed', payment_method: pm,
+              cash_paid: Math.round(Number(o.total) || 0), cash_change: 0,
+              cashier: String(body.cashier || 'Kasir').slice(0, 60)
+            };
+            if (body.shift_id) patch.shift_id = body.shift_id;
+            return upd('orders', 'id=eq.' + encodeURIComponent(o.id), patch, { allOutlets: true })
+              .then(function () { paidIds.push(o.id); return deductStockForOrder(o.id, o.items || [], orderTypeToChannel(o.order_type)); })
+              .then(function () { return autoJournalSale(o, o.items || []); });
+          });
+        });
+        return chain.then(function () {
+          setTableFree(oid, tbl).catch(function () {});
+          return ok({ success: true, paid: paidIds, count: paidIds.length,
+            total: mine.reduce(function (a, o) { return a + (Number(o.total) || 0); }, 0) });
+        });
+      });
+    }).catch(serverError);
+  };
+
+  // 8d4. POST /api/pos/split-pay — bayar SEBAGIAN item dari bill meja (split bill).
+  //     { table, picks: [{order_id, idx, qty}], payment_method, cash_paid?, shift_id?, cashier? }
+  //     Item yg dipilih dipindah ke order baru (completed); sisa tetap pending.
+  routes['POST /api/pos/split-pay'] = function (body) {
+    var tbl = String(body.table || '').trim();
+    var picks = body.picks || [];
+    if (!tbl || !picks.length) return Promise.resolve(bad({ success: false, message: 'Pilih item yg mau dipisah.' }));
+    return outletReady().then(function (ready) {
+      var oid = ready ? currentOutletId() : null;
+      if (!oid || oid === 'ALL' || oid.indexOf(',') >= 0) {
+        return bad({ success: false, message: 'Kunci outlet POS dulu.' });
+      }
+      return sel('orders', 'select=*&status=eq.pending&limit=100').then(function (rows) {
+        var byId = {};
+        (rows || []).forEach(function (o) { byId[o.id] = o; });
+        var splitItems = [];
+        var affected = {};
+        for (var k = 0; k < picks.length; k++) {
+          var p = picks[k];
+          var o = byId[p.order_id];
+          if (!o) continue;
+          if (String(o.table_or_customer || '').replace(/^Meja\s+/i, '').trim() !== tbl) continue;
+          var it = (o.items || [])[p.idx];
+          if (!it) continue;
+          var q = Math.min(Number(p.qty) || it.qty, Number(it.qty) || 0);
+          if (q <= 0) continue;
+          splitItems.push({ id: it.id, name: it.name, price: it.price, qty: q, note: it.note || '', from_order: o.id });
+          if (!affected[o.id]) affected[o.id] = [];
+          affected[o.id].push({ idx: p.idx, qty: q });
+        }
+        if (!splitItems.length) return bad({ success: false, message: 'Item tidak valid.' });
+        var subtotal = splitItems.reduce(function (a, i) { return a + (Number(i.price) || 0) * i.qty; }, 0);
+        var tax = Math.round(subtotal * 0.10);
+        var total = subtotal + tax;
+        var todayStr = getJakartaDateKey();
+        return rpc('next_order_seq', { p_date_key: todayStr }).then(function (seqRaw) {
+          var seq = Array.isArray(seqRaw) ? seqRaw[0] : seqRaw;
+          var newId = __brand('orderPrefix', 'CWY') + '-' + todayStr + '-' + String(seq).padStart(4, '0');
+          var pm = body.payment_method || 'cash';
+          var newRow = {
+            id: newId, outlet_id: oid, order_type: 'dine-in',
+            table_or_customer: 'Meja ' + tbl + ' (split)',
+            items: splitItems, subtotal: subtotal, discount: 0,
+            tax_amount: tax, service_amount: 0, total: total,
+            payment_method: pm, cash_paid: Math.round(Number(body.cash_paid) || total),
+            cash_change: Math.max(0, Math.round(Number(body.cash_paid) || 0) - total),
+            cashier: String(body.cashier || 'Kasir').slice(0, 60),
+            status: 'completed', kitchen_status: 'served', client_ref: genClientRef()
+          };
+          var chain = ins('orders', [newRow]).then(function () {
+            return deductStockForOrder(newId, splitItems, 'dine_in');
+          }).then(function () { return autoJournalSale(newRow, splitItems); });
+          // kurangi item di order asal
+          Object.keys(affected).forEach(function (orderId) {
+            chain = chain.then(function () {
+              var o = byId[orderId];
+              var items = (o.items || []).slice();
+              affected[orderId].forEach(function (a) {
+                if (items[a.idx]) {
+                  items[a.idx].qty = (Number(items[a.idx].qty) || 0) - a.qty;
+                }
+              });
+              items = items.filter(function (i) { return (Number(i.qty) || 0) > 0; });
+              if (!items.length) {
+                // order asal habis -> tandai completed (sudah terbayar via split)
+                return upd('orders', 'id=eq.' + encodeURIComponent(orderId),
+                  { status: 'completed', payment_method: 'split', cashier: String(body.cashier || 'Kasir').slice(0, 60) }, { allOutlets: true });
+              }
+              var st2 = items.reduce(function (a, i) { return a + (Number(i.price) || 0) * (Number(i.qty) || 0); }, 0);
+              var tx2 = Math.round(st2 * 0.10);
+              return upd('orders', 'id=eq.' + encodeURIComponent(orderId),
+                { items: items, subtotal: st2, tax_amount: tx2, total: st2 + tx2 }, { allOutlets: true });
+            });
+          });
+          return chain.then(function () {
+            return ok({ success: true, order_id: newId, total: total, split_count: splitItems.length });
+          });
+        });
+      });
+    }).catch(serverError);
+  };
   //     { pending_order_id, payment_method, cash_paid?, shift_id? }
   //     Efek: status -> completed + potong stok + jurnal (sama spt checkout).
   routes['POST /api/pos/checkout-pending'] = function (body) {
