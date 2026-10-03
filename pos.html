@@ -2,7 +2,7 @@
 <html lang="id">
 <head>
   <script src="brand-config.js"></script>
-  <script src="api-supabase.js?v=20261003l"></script>
+  <script src="api-supabase.js?v=20261003m"></script>
   <!-- api-shim: ganti /api/* dgn localStorage (perbaikan persistensi utk hosting statis) -->
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
@@ -925,21 +925,26 @@
       } catch (err) { outlets = []; }
       const outletWrap = document.getElementById('shift-outlet-wrap');
       const outletSel = document.getElementById('shift-outlet-select');
+      // hadPin: perangkat SUDAH dipin ke outlet sebelum modal dibuka.
+      // Perangkat baru (tanpa pin) wajib pilih manual — jangan auto-resume
+      // shift outlet lain supaya tidak nyangkut.
+      const hadPin = !!getOutletId();
       if (outlets.length > 1) {
         outletWrap.classList.remove('hidden');
-        const cur = getOutletId();
         outletSel.innerHTML = outlets.map(o =>
-          `<option value="${o.id}" ${cur === o.id ? 'selected' : ''}>${escapeHtml(o.name)}</option>`
+          `<option value="${o.id}" ${hadPin && getOutletId() === o.id ? 'selected' : ''}>${escapeHtml(o.name)}</option>`
         ).join('');
-        if (!cur) setOutletId(outlets[0].id);
+        if (!hadPin) setOutletId(outlets[0].id);
       } else {
         outletWrap.classList.add('hidden');
-        if (outlets.length === 1) setOutletId(outlets[0].id);
+        if (outlets.length === 1 && !hadPin) setOutletId(outlets[0].id);
       }
-      // Kalau outlet terpilih ternyata sudah ada shift terbuka (mis. dibuka
-      // dari perangkat lain), langsung lanjutkan — bukan buka baru.
-      const pickedOutlet = getOutletId();
-      if (pickedOutlet && await tryResumeOutletShift(pickedOutlet)) return;
+      // Resume otomatis hanya bila perangkat memang sudah dipin ke outlet ini
+      // sebelum modal dibuka (mis. dibuka dari perangkat lain setelah pin).
+      if (hadPin) {
+        const pickedOutlet = getOutletId();
+        if (pickedOutlet && await tryResumeOutletShift(pickedOutlet)) return;
+      }
       // Muat daftar pegawai aktif (ter-scope outlet bila sudah pilih)
       await loadShiftEmployees();
       document.getElementById('shift-pin-input').value = '';
