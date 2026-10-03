@@ -468,8 +468,8 @@
       var ownerUsername = ou || 'owner';
       return getSetting('owner_password_hash').then(function (ph) {
         if (ph) {
-          return verifyPassword(password, ph).then(function (ok) {
-            if (!ok) return unauthorized({ success: false, message: 'Username atau password salah.' });
+          return verifyPassword(password, ph).then(function (valid) {
+            if (!valid) return unauthorized({ success: false, message: 'Username atau password salah.' });
             return ok({ success: true, session: { id: 'owner', username: ownerUsername, name: 'Owner', role: 'owner', outletIds: ['*'] } });
           });
         }
@@ -494,8 +494,8 @@
         if (!e || !e.active || !e.password_hash) return unauthorized({ success: false, message: 'Username atau password salah.' });
         if (e.role === 'kasir') return forbidden({ success: false, message: 'Akun kasir hanya untuk POS, tidak bisa buka portal.' });
         if (['area_manager', 'store_manager'].indexOf(e.role) < 0) return forbidden({ success: false, message: 'Peran tidak dikenal.' });
-        return verifyPassword(password, e.password_hash).then(function (ok) {
-          if (!ok) return unauthorized({ success: false, message: 'Username atau password salah.' });
+        return verifyPassword(password, e.password_hash).then(function (valid) {
+          if (!valid) return unauthorized({ success: false, message: 'Username atau password salah.' });
           return resolveEmployeeOutlets(e).then(function (outletIds) {
             return ok({ success: true, session: { id: e.id, username: e.username, name: e.name, role: e.role, outletIds: outletIds } });
           });
