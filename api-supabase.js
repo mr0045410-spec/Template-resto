@@ -1731,6 +1731,24 @@
         if (!orows.length || !orows[0].active) {
           return bad({ success: false, message: 'Outlet tidak aktif.' });
         }
+        return null;
+      })
+      .then(function () {
+        // Pengaman anti-iseng: QR order meja hanya diterima bila meja tsb sedang "isi".
+        // Meja ditandai isi oleh waiter saat tamu datang (atau otomatis dari order sebelumnya).
+        if (!table) return null;
+        return tableTablesReady().then(function (ready) {
+          if (!ready) return null; // denah meja belum aktif -> lewati pengaman
+          return rawSel('dining_tables', 'select=status&outlet_id=eq.' + encodeURIComponent(outletId) +
+            '&table_number=eq.' + encodeURIComponent(table) + '&limit=1');
+        }).then(function (trows) {
+          if (trows && trows.length && trows[0].status !== 'occupied') {
+            throw { isGuard: true, message: 'Meja ' + table + ' belum aktif. Minta pelayan untuk mengaktifkan meja.' };
+          }
+          return null;
+        });
+      })
+      .then(function () {
         // Validasi menu: ada, tersedia, dan ikut scope outlet
         var menuIds = items.map(function (i) { return i.menu_id; }).filter(Boolean);
         return rawSel('menu_items', 'select=id,name,price_value,in_stock,stock_qty,outlet_id&id=in.(' +
@@ -1801,7 +1819,10 @@
             return created({ success: true, order: { id: orderId, total: total, table: table } });
           });
         });
-      }).catch(serverError);
+      }).catch(function (e) {
+        if (e && e.isGuard) return bad({ success: false, message: e.message });
+        return serverError(e);
+      });
   };
 
   // 8b2. GET /api/qr/menu — daftar menu publik utk tamu (tanpa sesi).
