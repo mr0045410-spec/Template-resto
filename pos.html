@@ -2,7 +2,7 @@
 <html lang="id">
 <head>
   <script src="brand-config.js"></script>
-  <script src="api-supabase.js?v=20261003j"></script>
+  <script src="api-supabase.js?v=20261003l"></script>
   <!-- api-shim: ganti /api/* dgn localStorage (perbaikan persistensi utk hosting statis) -->
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
@@ -742,7 +742,18 @@
     updateClock();
 
     // Init App
+    // URUTAN PENTING (multi-outlet): kunci outlet dari shift DULU
+    // (checkShiftStatus -> setOutletId dari shift.outletId), BARU load menu.
+    // Kalau dibalik, menu ke-load tanpa filter outlet di kunjungan pertama.
     async function initPOS() {
+      await checkShiftStatus();
+      await loadMenu();
+      await loadPosSettings(); // tarif pajak & service (non-fatal)
+      loadEligiblePromos(); // daftar promo (non-fatal)
+      lucide.createIcons();
+    }
+
+    async function loadMenu() {
       try {
         const res = await fetch('/api/menu');
         const data = await res.json();
@@ -759,10 +770,6 @@
       } catch (err) {
         console.error('Failed to load menu for POS:', err);
       }
-      await loadPosSettings(); // tarif pajak & service (non-fatal)
-      loadEligiblePromos(); // daftar promo (non-fatal)
-      lucide.createIcons();
-      await checkShiftStatus();
     }
 
     // Pengaturan pajak & service charge dari server (default: PB1 10%, service 0%).
@@ -795,15 +802,28 @@
     // =========================================================================
     async function checkShiftStatus() {
       let shiftApiOk = false;
+      let devOutlet = null;
+      let needPickOutlet = false;
       try {
-        const res = await fetch('/api/shift/current');
-        const data = await res.json();
-        shiftApiOk = res.ok && data.success === true;
-        if (shiftApiOk && data.shift) {
-          currentShift = data.shift;
-          if (data.shift.outletId) setOutletId(data.shift.outletId);
-          renderShiftBadge();
-          return; // ada shift terbuka -> langsung jualan
+        // 1. Pastikan outlet perangkat sudah dipin (kunci anti-nyangkut).
+        devOutlet = getOutletId();
+        if (!devOutlet) {
+          devOutlet = await ensureDeviceOutlet(); // throw -> mode kompatibilitas
+          if (!devOutlet) needPickOutlet = true;
+        }
+        if (devOutlet) {
+          // 2. Cari shift terbuka KHUSUS outlet perangkat ini.
+          const res = await fetch('/api/shift/current?outlet_id=' + encodeURIComponent(devOutlet));
+          const data = await res.json();
+          shiftApiOk = res.ok && data.success === true;
+          if (shiftApiOk && data.shift) {
+            currentShift = data.shift;
+            if (data.shift.outletId) setOutletId(data.shift.outletId);
+            renderShiftBadge();
+            return; // ada shift terbuka -> langsung jualan
+          }
+        } else if (needPickOutlet) {
+          shiftApiOk = true; // API terbukti jalan, tapi outlet perangkat belum dipilih
         }
       } catch (err) {
         console.error('Gagal cek shift:', err);
@@ -820,6 +840,36 @@
         currentShift = null;
         renderShiftBadge();
       }
+    }
+
+    // Pin outlet perangkat: 1 outlet aktif -> otomatis; >1 -> user pilih manual
+    // di modal buka shift. Throw bila API gagal (-> mode kompatibilitas).
+    async function ensureDeviceOutlet() {
+      const ores = await fetch('/api/outlets');
+      const odata = await ores.json();
+      const outlets = (odata.success && odata.outlets ? odata.outlets : []).filter(o => o.active);
+      if (outlets.length === 1) {
+        setOutletId(outlets[0].id);
+        return outlets[0].id;
+      }
+      return null;
+    }
+
+    // Coba lanjutkan shift yang sudah terbuka di outlet ini (mis. dibuka dari
+    // perangkat lain). Return true bila berhasil resume (modal ditutup).
+    async function tryResumeOutletShift(oid) {
+      try {
+        const res = await fetch('/api/shift/current?outlet_id=' + encodeURIComponent(oid));
+        const data = await res.json();
+        if (res.ok && data.success && data.shift) {
+          currentShift = data.shift;
+          document.getElementById('shift-open-modal').classList.add('hidden');
+          renderShiftBadge();
+          await loadMenu();
+          return true;
+        }
+      } catch (e) {}
+      return false;
     }
 
     let posOutletsCache = [];
@@ -886,6 +936,10 @@
         outletWrap.classList.add('hidden');
         if (outlets.length === 1) setOutletId(outlets[0].id);
       }
+      // Kalau outlet terpilih ternyata sudah ada shift terbuka (mis. dibuka
+      // dari perangkat lain), langsung lanjutkan — bukan buka baru.
+      const pickedOutlet = getOutletId();
+      if (pickedOutlet && await tryResumeOutletShift(pickedOutlet)) return;
       // Muat daftar pegawai aktif (ter-scope outlet bila sudah pilih)
       await loadShiftEmployees();
       document.getElementById('shift-pin-input').value = '';
@@ -904,9 +958,11 @@
         else localStorage.setItem('mykitchen_outlet_id', id);
       } catch (e) {}
     }
-    function onShiftOutletChange() {
+    async function onShiftOutletChange() {
       const oid = document.getElementById('shift-outlet-select').value;
       setOutletId(oid);
+      // Ganti outlet -> cek dulu apa sudah ada shift terbuka di outlet itu.
+      if (await tryResumeOutletShift(oid)) return;
       loadShiftEmployees();
     }
     async function loadShiftEmployees() {
@@ -956,6 +1012,7 @@
           currentShift = data.shift;
           document.getElementById('shift-open-modal').classList.add('hidden');
           renderShiftBadge();
+          await loadMenu(); // menu ikut outlet shift yang baru dibuka
         } else {
           errEl.textContent = data.message || 'Gagal membuka shift.';
           errEl.classList.remove('hidden');
