@@ -7,145 +7,188 @@
 <script src="https://cdn.jsdelivr.net/npm/@tailwindcss/browser@4"></script>
 <script src="https://unpkg.com/lucide@latest"></script>
 <script>
-  // Kunci outlet perangkat dapur (terpisah dari POS & portal)
   window.__mykitchenOutletKey = 'mykitchen_kitchen_outlet_id';
 </script>
-<script src="api-supabase.js?v=20261003w"></script>
+<script src="api-supabase.js?v=20261003x"></script>
 <style>
   body { font-family: 'Karla', system-ui, sans-serif; }
   .font-display { font-family: 'Playfair Display SC', Georgia, serif; }
-  .timer-warn { animation: pulse-warn 1.2s ease-in-out infinite; }
-  @keyframes pulse-warn { 0%,100% { opacity: 1; } 50% { opacity: .45; } }
+  .timer-warn { animation: pulse-warn 1s ease-in-out infinite; }
+  @keyframes pulse-warn { 0%,100% { opacity: 1; } 50% { opacity: .4; } }
   .new-flash { animation: flash-in .8s ease-in-out 3; }
   @keyframes flash-in { 0%,100% { box-shadow: 0 0 0 0 rgba(220,38,38,0); } 50% { box-shadow: 0 0 0 6px rgba(220,38,38,.55); } }
+  .ready-flash { animation: ready-pulse 1.6s ease-in-out infinite; }
+  @keyframes ready-pulse { 0%,100% { border-color: #34d399; } 50% { border-color: #065f46; } }
   ::-webkit-scrollbar { width: 8px; height: 8px; }
   ::-webkit-scrollbar-thumb { background: #78716c; border-radius: 8px; }
+  .item-done { text-decoration: line-through; opacity: .45; }
 </style>
 </head>
 <body class="bg-stone-950 text-stone-100 min-h-screen">
 
-<!-- ============ LOCK SCREEN: pilih outlet ============ -->
+<!-- LOCK: outlet -->
 <div id="lock-screen" class="hidden fixed inset-0 z-50 bg-stone-950 flex items-center justify-center p-6">
   <div class="w-full max-w-md bg-stone-900 rounded-3xl border border-stone-700 p-8 shadow-2xl">
     <div class="text-center mb-6">
       <div class="text-5xl mb-3">🍳</div>
       <h1 class="font-display text-2xl font-black text-amber-400">LAYAR DAPUR</h1>
-      <p class="text-stone-400 text-sm mt-1">Pilih outlet untuk perangkat ini.<br>Terkunci sampai diganti manual.</p>
+      <p class="text-stone-400 text-sm mt-1">Pilih outlet untuk perangkat ini.</p>
     </div>
-    <label class="block text-xs font-bold text-stone-400 mb-1.5">OUTLET</label>
     <select id="lock-outlet-select" class="w-full px-4 py-3 rounded-2xl bg-stone-800 border border-stone-600 font-bold text-base focus:border-amber-400 focus:outline-none"></select>
-    <button onclick="lockKitchenOutlet()" class="mt-5 w-full py-3.5 rounded-2xl bg-red-700 hover:bg-red-600 font-black text-lg transition-colors">
-      🔒 Kunci ke Outlet Ini
-    </button>
+    <button onclick="lockKitchenOutlet()" class="mt-5 w-full py-3.5 rounded-2xl bg-red-700 hover:bg-red-600 font-black text-lg">🔒 Kunci ke Outlet Ini</button>
   </div>
 </div>
 
-<!-- ============ HEADER ============ -->
+<!-- LOCK: kru -->
+<div id="crew-screen" class="hidden fixed inset-0 z-50 bg-stone-950 flex items-center justify-center p-6">
+  <div class="w-full max-w-sm bg-stone-900 rounded-3xl border border-stone-700 p-8 shadow-2xl">
+    <div class="text-center mb-5">
+      <div class="text-5xl mb-3">🧑‍🍳</div>
+      <h1 class="font-display text-2xl font-black text-amber-400">KRU DAPUR</h1>
+      <p class="text-stone-400 text-sm mt-1">Masukkan PIN untuk mulai masak.</p>
+    </div>
+    <div id="crew-pin-display" class="text-center font-mono text-4xl font-black tracking-[0.5em] text-white bg-stone-800 rounded-2xl py-4 mb-4 h-[4.5rem]">••••</div>
+    <div class="grid grid-cols-3 gap-2.5" id="crew-pinpad"></div>
+    <p id="crew-error" class="hidden text-center text-red-400 text-sm font-bold mt-3"></p>
+  </div>
+</div>
+
+<!-- SOP modal -->
+<div id="sop-modal" class="hidden fixed inset-0 z-50 bg-black/80 flex items-center justify-center p-4" onclick="if(event.target===this)closeSop()">
+  <div class="w-full max-w-lg bg-stone-900 rounded-3xl border border-stone-600 p-6 max-h-[90vh] overflow-y-auto">
+    <div class="flex items-start justify-between mb-4">
+      <h3 id="sop-title" class="font-black text-xl text-amber-400"></h3>
+      <button onclick="closeSop()" class="p-2 rounded-full bg-stone-800 hover:bg-stone-700"><i data-lucide="x" class="w-5 h-5"></i></button>
+    </div>
+    <img id="sop-img" class="w-full h-48 object-cover rounded-2xl mb-4 bg-stone-800" onerror="this.style.display='none'">
+    <p id="sop-desc" class="text-sm text-stone-400 mb-4"></p>
+    <h4 class="font-black text-sm text-stone-300 mb-2">📋 RESEP STANDAR (per porsi)</h4>
+    <div id="sop-recipe" class="space-y-1.5"></div>
+  </div>
+</div>
+
+<!-- HEADER -->
 <header class="sticky top-0 z-40 bg-stone-900/95 backdrop-blur border-b border-stone-700">
-  <div class="max-w-[1600px] mx-auto px-4 py-3 flex items-center gap-3 flex-wrap">
+  <div class="max-w-[1700px] mx-auto px-4 py-3 flex items-center gap-3 flex-wrap">
     <div class="text-3xl">🍳</div>
     <div class="mr-auto">
       <h1 class="font-display text-lg sm:text-xl font-black text-amber-400 leading-none">DAPUR</h1>
       <p id="kitchen-outlet-name" class="text-xs text-stone-400 font-semibold">—</p>
     </div>
+    <button onclick="crewLogout()" id="crew-badge" class="hidden items-center gap-1.5 px-3 py-2 rounded-xl bg-amber-900/50 border border-amber-700 text-amber-200 text-sm font-black" title="Ganti kru">🧑‍🍳 <span id="crew-name">—</span></button>
     <div id="clock" class="hidden sm:block font-mono text-lg font-bold text-stone-300 tabular-nums">--:--:--</div>
-    <button onclick="toggleSound()" id="btn-sound" class="p-2.5 rounded-xl bg-stone-800 hover:bg-stone-700 border border-stone-600 text-xl" title="Suara notifikasi">🔔</button>
-    <button onclick="loadKitchen(true)" class="p-2.5 rounded-xl bg-stone-800 hover:bg-stone-700 border border-stone-600" title="Refresh">
-      <i data-lucide="refresh-cw" class="w-5 h-5"></i>
-    </button>
+    <button onclick="toggleSound()" id="btn-sound" class="p-2.5 rounded-xl bg-stone-800 hover:bg-stone-700 border border-stone-600 text-xl" title="Suara">🔔</button>
+    <button onclick="loadKitchen(true)" class="p-2.5 rounded-xl bg-stone-800 hover:bg-stone-700 border border-stone-600" title="Refresh"><i data-lucide="refresh-cw" class="w-5 h-5"></i></button>
     <button onclick="unlockKitchen()" class="p-2.5 rounded-xl bg-stone-800 hover:bg-stone-700 border border-stone-600 text-xs font-bold text-stone-400" title="Ganti outlet">GANTI<br>OUTLET</button>
   </div>
-  <!-- Tabs -->
-  <div class="max-w-[1600px] mx-auto px-4 pb-3 flex gap-2">
+  <div class="max-w-[1700px] mx-auto px-4 pb-3 flex gap-2 flex-wrap">
     <button id="tab-btn-orders" onclick="switchTab('orders')" class="px-5 py-2 rounded-xl font-black text-sm bg-red-700 text-white">📋 PESANAN <span id="count-active" class="ml-1 px-1.5 py-0.5 rounded-md bg-black/30 text-xs">0</span></button>
-    <button id="tab-btn-stock" onclick="switchTab('stock')" class="px-5 py-2 rounded-xl font-black text-sm bg-stone-800 text-stone-300 border border-stone-700">📦 STOK BAHAN</button>
+    <button id="tab-btn-summary" onclick="switchTab('summary')" class="px-5 py-2 rounded-xl font-black text-sm bg-stone-800 text-stone-300 border border-stone-700">📊 RINGKASAN</button>
+    <button id="tab-btn-control" onclick="switchTab('control')" class="px-5 py-2 rounded-xl font-black text-sm bg-stone-800 text-stone-300 border border-stone-700">🎛️ KONTROL</button>
+  </div>
+  <div id="station-bar" class="max-w-[1700px] mx-auto px-4 pb-3 hidden gap-2 flex-wrap items-center">
+    <span class="text-xs font-bold text-stone-500">STASIUN:</span>
+    <div id="station-tabs" class="flex gap-2 flex-wrap"></div>
+    <button id="expo-toggle" onclick="toggleExpo()" class="ml-auto px-4 py-1.5 rounded-xl text-xs font-black bg-stone-800 text-stone-300 border border-stone-600">🖥️ MODE EXPO: OFF</button>
   </div>
 </header>
 
-<!-- ============ TAB: PESANAN ============ -->
-<main id="tab-orders" class="max-w-[1600px] mx-auto p-4">
-  <div id="kitchen-need-sql" class="hidden mb-4 p-4 rounded-2xl bg-amber-900/40 border border-amber-600 text-amber-200 text-sm font-semibold">
-    ⚠️ Kolom <code>kitchen_status</code> belum ada di database. Jalankan SQL skema dapur di Supabase SQL Editor dulu.
-  </div>
-  <div class="grid grid-cols-1 lg:grid-cols-3 gap-4 items-start">
-    <!-- BARU -->
-    <section>
-      <div class="flex items-center gap-2 mb-3 px-1">
-        <span class="w-3 h-3 rounded-full bg-red-500 animate-pulse"></span>
-        <h2 class="font-black text-red-400 tracking-wide">BARU MASUK</h2>
-        <span id="count-new" class="ml-auto px-2 py-0.5 rounded-lg bg-red-900/60 text-red-200 font-black text-sm">0</span>
-      </div>
-      <div id="col-new" class="space-y-3 min-h-[200px]"></div>
+<!-- TAB: PESANAN -->
+<main id="tab-orders" class="max-w-[1700px] mx-auto p-4">
+  <div id="kitchen-need-sql" class="hidden mb-4 p-4 rounded-2xl bg-amber-900/40 border border-amber-600 text-amber-200 text-sm font-semibold">⚠️ Kolom <code>kitchen_status</code> belum ada. Jalankan SQL skema dapur dulu.</div>
+  <div id="kanban" class="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 gap-4 items-start">
+    <section id="sec-held" class="hidden">
+      <div class="flex items-center gap-2 mb-3 px-1"><span class="w-3 h-3 rounded-full bg-stone-500"></span><h2 class="font-black text-stone-400 tracking-wide">DITAHAN</h2><span id="count-held" class="ml-auto px-2 py-0.5 rounded-lg bg-stone-800 text-stone-300 font-black text-sm">0</span></div>
+      <div id="col-held" class="space-y-3"></div>
     </section>
-    <!-- DIMASAK -->
     <section>
-      <div class="flex items-center gap-2 mb-3 px-1">
-        <span class="w-3 h-3 rounded-full bg-amber-400"></span>
-        <h2 class="font-black text-amber-400 tracking-wide">SEDANG DIMASAK</h2>
-        <span id="count-preparing" class="ml-auto px-2 py-0.5 rounded-lg bg-amber-900/60 text-amber-200 font-black text-sm">0</span>
-      </div>
-      <div id="col-preparing" class="space-y-3 min-h-[200px]"></div>
+      <div class="flex items-center gap-2 mb-3 px-1"><span class="w-3 h-3 rounded-full bg-red-500 animate-pulse"></span><h2 class="font-black text-red-400 tracking-wide">BARU</h2><span id="count-new" class="ml-auto px-2 py-0.5 rounded-lg bg-red-900/60 text-red-200 font-black text-sm">0</span></div>
+      <div id="col-new" class="space-y-3"></div>
     </section>
-    <!-- SIAP -->
     <section>
-      <div class="flex items-center gap-2 mb-3 px-1">
-        <span class="w-3 h-3 rounded-full bg-emerald-400"></span>
-        <h2 class="font-black text-emerald-400 tracking-wide">SIAP DIANTAR</h2>
-        <span id="count-ready" class="ml-auto px-2 py-0.5 rounded-lg bg-emerald-900/60 text-emerald-200 font-black text-sm">0</span>
-      </div>
-      <div id="col-ready" class="space-y-3 min-h-[200px]"></div>
+      <div class="flex items-center gap-2 mb-3 px-1"><span class="w-3 h-3 rounded-full bg-amber-400"></span><h2 class="font-black text-amber-400 tracking-wide">DIMASAK</h2><span id="count-preparing" class="ml-auto px-2 py-0.5 rounded-lg bg-amber-900/60 text-amber-200 font-black text-sm">0</span></div>
+      <div id="col-preparing" class="space-y-3"></div>
+    </section>
+    <section>
+      <div class="flex items-center gap-2 mb-3 px-1"><span class="w-3 h-3 rounded-full bg-emerald-400"></span><h2 class="font-black text-emerald-400 tracking-wide">SIAP</h2><span id="count-ready" class="ml-auto px-2 py-0.5 rounded-lg bg-emerald-900/60 text-emerald-200 font-black text-sm">0</span></div>
+      <div id="col-ready" class="space-y-3"></div>
     </section>
   </div>
-  <div id="kitchen-empty" class="hidden text-center py-16 text-stone-500">
-    <div class="text-6xl mb-3">🧑‍🍳</div>
-    <p class="font-bold text-lg">Dapur lagi sepi. Mantap.</p>
-    <p class="text-sm">Order baru dari kasir bakal muncul di sini otomatis.</p>
+  <div id="kitchen-empty" class="hidden text-center py-16 text-stone-500"><div class="text-6xl mb-3">🧑‍🍳</div><p class="font-bold text-lg">Dapur lagi sepi.</p></div>
+  <!-- Recall -->
+  <div class="mt-8">
+    <button onclick="document.getElementById('recall-list').classList.toggle('hidden')" class="text-sm font-bold text-stone-500 hover:text-stone-300">🕘 Tiket selesai 2 jam terakhir (recall)</button>
+    <div id="recall-list" class="hidden mt-3 grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3"></div>
   </div>
 </main>
 
-<!-- ============ TAB: STOK BAHAN ============ -->
-<main id="tab-stock" class="hidden max-w-[1600px] mx-auto p-4">
-  <div class="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 gap-3" id="stock-grid"></div>
-  <div id="stock-empty" class="hidden text-center py-16 text-stone-500">
-    <div class="text-6xl mb-3">📦</div>
-    <p class="font-bold">Belum ada data bahan.</p>
-  </div>
+<!-- TAB: RINGKASAN -->
+<main id="tab-summary" class="hidden max-w-[1700px] mx-auto p-4">
+  <p class="text-sm text-stone-400 mb-4">Total porsi yang harus dimasak — gabungan semua tiket aktif. Masak sekaligus biar efisien.</p>
+  <div id="summary-grid" class="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 gap-3"></div>
+  <div id="summary-empty" class="hidden text-center py-16 text-stone-500"><div class="text-6xl mb-3">📊</div><p class="font-bold">Belum ada tiket aktif.</p></div>
+</main>
+
+<!-- TAB: KONTROL -->
+<main id="tab-control" class="hidden max-w-[1700px] mx-auto p-4 space-y-8">
+  <!-- 86 -->
+  <section>
+    <h2 class="font-black text-lg text-red-400 mb-1">🚫 MENU 86 (habis)</h2>
+    <p class="text-xs text-stone-500 mb-3">Matikan dari sini — langsung kekunci di kasir outlet ini.</p>
+    <div id="menu86-grid" class="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 xl:grid-cols-6 gap-3"></div>
+  </section>
+  <!-- Waste -->
+  <section class="max-w-2xl">
+    <h2 class="font-black text-lg text-amber-400 mb-3">🗑️ CATAT WASTE</h2>
+    <div class="bg-stone-900 border border-stone-700 rounded-2xl p-5 space-y-3">
+      <div>
+        <label class="block text-xs font-bold text-stone-400 mb-1">BAHAN</label>
+        <select id="waste-ing" class="w-full px-3 py-2.5 rounded-xl bg-stone-800 border border-stone-600 font-bold"></select>
+      </div>
+      <div class="grid grid-cols-2 gap-3">
+        <div><label class="block text-xs font-bold text-stone-400 mb-1">JUMLAH</label><input id="waste-qty" type="number" min="0" step="0.01" class="w-full px-3 py-2.5 rounded-xl bg-stone-800 border border-stone-600 font-mono font-bold"></div>
+        <div><label class="block text-xs font-bold text-stone-400 mb-1">SEBAB</label><select id="waste-reason" class="w-full px-3 py-2.5 rounded-xl bg-stone-800 border border-stone-600 font-bold"><option>Gosong</option><option>Tumpah</option><option>Kadaluarsa</option><option>Rusak</option><option>Remake</option><option>Lainnya</option></select></div>
+      </div>
+      <div><label class="block text-xs font-bold text-stone-400 mb-1">CATATAN</label><input id="waste-note" placeholder="misal: nasi goreng meja 5 gosong" class="w-full px-3 py-2.5 rounded-xl bg-stone-800 border border-stone-600"></div>
+      <button onclick="submitWaste()" class="w-full py-3 rounded-xl bg-amber-600 hover:bg-amber-500 text-black font-black">CATAT WASTE</button>
+      <p id="waste-msg" class="hidden text-sm font-bold text-center"></p>
+    </div>
+  </section>
+  <!-- Stok -->
+  <section>
+    <h2 class="font-black text-lg text-stone-300 mb-3">📦 STOK BAHAN</h2>
+    <div id="stock-grid" class="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 gap-3"></div>
+  </section>
 </main>
 
 <script>
-  const KS_LABEL = { new: 'BARU', preparing: 'DIMASAK', ready: 'SIAP' };
-  let kitchenOrders = [];
-  let kitchenIngredients = [];
-  let soundOn = true;
-  let knownOrderIds = new Set();
-  let currentTab = 'orders';
-
   const esc = s => String(s == null ? '' : s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+  let kitchenOrders = [], kitchenIngredients = [], kitchenMenus = [], kitchenRecipes = [];
+  let recentOrders = [];
+  let soundOn = true, knownOrderIds = new Set(), redWarned = new Set();
+  let currentTab = 'orders', activeStation = '', expoMode = false;
+  let kitchenCrew = null, pinBuffer = '';
 
-  // ---------- Outlet lock ----------
-  function getKitchenOutletId() {
-    try { return localStorage.getItem('mykitchen_kitchen_outlet_id') || null; } catch (e) { return null; }
-  }
+  // ---------- Outlet & kru ----------
+  function getKitchenOutletId() { try { return localStorage.getItem('mykitchen_kitchen_outlet_id') || null; } catch (e) { return null; } }
+  function getKitchenCrew() { try { return JSON.parse(localStorage.getItem('mykitchen_kitchen_crew') || 'null'); } catch (e) { return null; } }
   async function initKitchen() {
     const oid = getKitchenOutletId();
     if (!oid) {
       try {
-        const res = await fetch('/api/outlets');
-        const data = await res.json();
+        const res = await fetch('/api/outlets'); const data = await res.json();
         const outlets = (data.success && data.outlets || []).filter(o => o.active);
-        const sel = document.getElementById('lock-outlet-select');
-        sel.innerHTML = outlets.map(o => `<option value="${esc(o.id)}">${esc(o.name)}</option>`).join('');
-        document.getElementById('lock-screen').classList.remove('hidden');
-      } catch (e) {
-        document.getElementById('lock-screen').classList.remove('hidden');
-        document.getElementById('lock-outlet-select').innerHTML = '<option>Gagal memuat outlet</option>';
-      }
+        document.getElementById('lock-outlet-select').innerHTML = outlets.map(o => `<option value="${esc(o.id)}">${esc(o.name)}</option>`).join('');
+      } catch (e) {}
+      document.getElementById('lock-screen').classList.remove('hidden');
       return;
     }
     document.getElementById('lock-screen').classList.add('hidden');
+    kitchenCrew = getKitchenCrew();
+    if (!kitchenCrew) { buildPinpad(); document.getElementById('crew-screen').classList.remove('hidden'); return; }
+    renderCrewBadge();
     try {
-      const res = await fetch('/api/outlets');
-      const data = await res.json();
+      const res = await fetch('/api/outlets'); const data = await res.json();
       const o = (data.outlets || []).find(x => x.id === oid);
       document.getElementById('kitchen-outlet-name').textContent = o ? o.name : oid;
     } catch (e) {}
@@ -154,101 +197,84 @@
     setInterval(tickTimers, 30000);
   }
   function lockKitchenOutlet() {
-    const v = document.getElementById('lock-outlet-select').value;
-    if (!v) return;
+    const v = document.getElementById('lock-outlet-select').value; if (!v) return;
     try { localStorage.setItem('mykitchen_kitchen_outlet_id', v); } catch (e) {}
     location.reload();
   }
-  function unlockKitchen() {
-    if (!confirm('Ganti outlet perangkat dapur ini?')) return;
-    try { localStorage.removeItem('mykitchen_kitchen_outlet_id'); } catch (e) {}
-    location.reload();
+  function unlockKitchen() { if (!confirm('Ganti outlet perangkat dapur ini?')) return; try { localStorage.removeItem('mykitchen_kitchen_outlet_id'); } catch (e) {} location.reload(); }
+  function buildPinpad() {
+    const keys = ['1','2','3','4','5','6','7','8','9','C','0','⌫'];
+    document.getElementById('crew-pinpad').innerHTML = keys.map(k => `<button onclick="pinKey('${k}')" class="py-4 rounded-2xl bg-stone-800 hover:bg-stone-700 border border-stone-600 font-black text-2xl">${k}</button>`).join('');
   }
+  function pinKey(k) {
+    if (k === 'C') pinBuffer = ''; else if (k === '⌫') pinBuffer = pinBuffer.slice(0, -1);
+    else if (pinBuffer.length < 6) pinBuffer += k;
+    document.getElementById('crew-pin-display').textContent = (pinBuffer || '••••').padEnd(4, '•').slice(0, 6);
+    document.getElementById('crew-error').classList.add('hidden');
+    if (pinBuffer.length >= 4) crewLogin();
+  }
+  async function crewLogin() {
+    try {
+      const res = await fetch('/api/kitchen/login', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ pin: pinBuffer }) });
+      const data = await res.json();
+      if (data.success) {
+        kitchenCrew = data.crew;
+        try { localStorage.setItem('mykitchen_kitchen_crew', JSON.stringify(kitchenCrew)); } catch (e) {}
+        document.getElementById('crew-screen').classList.add('hidden');
+        renderCrewBadge(); loadKitchen(true);
+      } else { crewErr(data.message || 'PIN salah'); }
+    } catch (e) { crewErr('Koneksi gagal'); }
+  }
+  function crewErr(m) { const e = document.getElementById('crew-error'); e.textContent = m; e.classList.remove('hidden'); pinBuffer = ''; document.getElementById('crew-pin-display').textContent = '••••'; }
+  function renderCrewBadge() { const b = document.getElementById('crew-badge'); if (kitchenCrew) { document.getElementById('crew-name').textContent = kitchenCrew.name; b.classList.remove('hidden'); b.classList.add('flex'); } }
+  function crewLogout() { if (!confirm('Ganti kru dapur?')) return; try { localStorage.removeItem('mykitchen_kitchen_crew'); } catch (e) {} location.reload(); }
 
   // ---------- Data ----------
+  const menuStationMap = {};
   async function loadKitchen(manual) {
     if (!getKitchenOutletId()) return;
     try {
-      const [ro, ri] = await Promise.all([
+      const [ro, rr] = await Promise.all([
         fetch('/api/kitchen/orders').then(r => r.json()),
-        currentTab === 'stock' ? fetch('/api/kitchen/ingredients').then(r => r.json()) : Promise.resolve(null)
+        fetch('/api/kitchen/recent').then(r => r.json()).catch(() => ({ orders: [] }))
       ]);
       if (ro.needSql) document.getElementById('kitchen-need-sql').classList.remove('hidden');
       else document.getElementById('kitchen-need-sql').classList.add('hidden');
       const orders = (ro.success && ro.orders) || [];
-      // Deteksi order baru -> bunyi + flash
       const freshIds = new Set(orders.map(o => o.id));
       const isNew = orders.filter(o => !knownOrderIds.has(o.id) && o.kitchenStatus === 'new');
       if (knownOrderIds.size && isNew.length && soundOn) playBeep();
-      kitchenOrders = orders;
-      knownOrderIds = freshIds;
-      renderOrders(isNew.map(o => o.id));
-      if (ri && ri.success) { kitchenIngredients = ri.ingredients || []; renderStock(); }
+      kitchenOrders = orders; knownOrderIds = freshIds;
+      recentOrders = (rr.success && rr.orders) || [];
+      // menu + station map (lazy)
+      if (!kitchenMenus.length) {
+        try {
+          const rm = await fetch('/api/menu').then(r => r.json());
+          kitchenMenus = (rm.success && rm.data && rm.data.menuItems) || [];
+          kitchenMenus.forEach(m => { menuStationMap[m.id] = m.station || ''; });
+        } catch (e) {}
+      }
+      if (currentTab === 'control') {
+        const [ri, rrec] = await Promise.all([
+          fetch('/api/kitchen/ingredients').then(r => r.json()).catch(() => ({})),
+          fetch('/api/kitchen/recipes').then(r => r.json()).catch(() => ({}))
+        ]);
+        if (ri.success) { kitchenIngredients = ri.ingredients || []; renderStock(); renderWasteIng(); }
+        if (rrec.success) kitchenRecipes = rrec.menus || [];
+        renderMenu86();
+      }
+      renderStationTabs(); renderOrders(isNew.map(o => o.id)); renderSummary(); renderRecall();
       if (window.lucide) lucide.createIcons();
-    } catch (e) { /* diam, coba lagi next poll */ }
+    } catch (e) {}
     if (manual) tickClock();
   }
 
-  // ---------- Render pesanan ----------
-  function elapsedMin(o) {
-    const t = new Date(o.createdAt).getTime();
-    return Math.max(0, Math.floor((Date.now() - t) / 60000));
-  }
+  // ---------- Timer ----------
+  function elapsedMin(o) { return Math.max(0, Math.floor((Date.now() - new Date(o.createdAt).getTime()) / 60000)); }
   function timerClass(min) {
-    if (min >= 15) return 'bg-red-600 text-white timer-warn';
-    if (min >= 8) return 'bg-amber-500 text-black';
+    if (min > 15) return 'bg-red-600 text-white timer-warn';
+    if (min >= 10) return 'bg-amber-500 text-black';
     return 'bg-stone-700 text-stone-200';
-  }
-  function typeBadge(o) {
-    const t = (o.orderType || '').toLowerCase();
-    const toc = o.tableOrCustomer || '';
-    if (t === 'dine-in' || /^meja/i.test(toc)) return `<span class="px-2 py-0.5 rounded-lg bg-sky-800 text-sky-100 text-xs font-black">🍽️ ${esc(toc || 'Dine-in')}</span>`;
-    if (t === 'takeaway') return `<span class="px-2 py-0.5 rounded-lg bg-violet-800 text-violet-100 text-xs font-black">🛍️ Takeaway${toc ? ' • ' + esc(toc) : ''}</span>`;
-    return `<span class="px-2 py-0.5 rounded-lg bg-stone-700 text-stone-200 text-xs font-black">🛵 ${esc(toc || t || 'Delivery')}</span>`;
-  }
-  function actionBtn(o) {
-    const ks = o.kitchenStatus;
-    if (ks === 'new') return `<button onclick="setKs('${esc(o.id)}','preparing')" class="w-full py-3 rounded-xl bg-amber-500 hover:bg-amber-400 text-black font-black text-base">🔥 MULAI MASAK</button>`;
-    if (ks === 'preparing') return `<button onclick="setKs('${esc(o.id)}','ready')" class="w-full py-3 rounded-xl bg-emerald-500 hover:bg-emerald-400 text-black font-black text-base">✅ SIAP</button>`;
-    return `<div class="flex gap-2">
-      <button onclick="setKs('${esc(o.id)}','preparing')" class="px-3 py-3 rounded-xl bg-stone-700 hover:bg-stone-600 font-bold text-sm" title="Kembalikan ke dimasak">↩️</button>
-      <button onclick="setKs('${esc(o.id)}','served')" class="flex-1 py-3 rounded-xl bg-stone-600 hover:bg-stone-500 font-black text-base">🍽️ SELESAI</button>
-    </div>`;
-  }
-  function orderCard(o, flash) {
-    const min = elapsedMin(o);
-    const items = Array.isArray(o.items) ? o.items : [];
-    const itemsHtml = items.map(it => `
-      <div class="flex items-start gap-2 py-1.5 border-b border-stone-700/60 last:border-0">
-        <span class="min-w-[2.5rem] text-center px-1.5 py-0.5 rounded-lg bg-red-800 text-white font-black">${esc(it.qty)}×</span>
-        <div class="flex-1">
-          <div class="font-bold leading-tight">${esc(it.name)}</div>
-          ${it.note ? `<div class="text-xs text-amber-300 italic">📝 ${esc(it.note)}</div>` : ''}
-        </div>
-      </div>`).join('');
-    return `<div id="kord-${esc(o.id)}" class="rounded-2xl bg-stone-900 border border-stone-700 p-4 shadow-lg ${flash ? 'new-flash' : ''}">
-      <div class="flex items-center gap-2 mb-2">
-        <span class="font-mono font-black text-lg text-white">${esc(o.id)}</span>
-        <span class="ml-auto px-2.5 py-1 rounded-lg font-mono font-black tabular-nums ${timerClass(min)}" data-timer="${esc(o.createdAt)}">⏱ ${min}m</span>
-      </div>
-      <div class="flex items-center gap-2 mb-2 flex-wrap">
-        ${typeBadge(o)}
-        ${o.customerName ? `<span class="text-xs text-stone-400 font-semibold">${esc(o.customerName)}</span>` : ''}
-        <span class="ml-auto text-[11px] text-stone-500">${esc(o.cashier || '')}</span>
-      </div>
-      <div class="mb-3">${itemsHtml}</div>
-      ${actionBtn(o)}
-    </div>`;
-  }
-  function renderOrders(flashIds) {
-    const cols = { new: [], preparing: [], ready: [] };
-    kitchenOrders.forEach(o => { (cols[o.kitchenStatus] || cols.new).push(o); });
-    ['new', 'preparing', 'ready'].forEach(k => {
-      document.getElementById('col-' + k).innerHTML = cols[k].map(o => orderCard(o, flashIds.includes(o.id))).join('');
-      document.getElementById('count-' + k).textContent = cols[k].length;
-    });
-    document.getElementById('count-active').textContent = kitchenOrders.length;
-    document.getElementById('kitchen-empty').classList.toggle('hidden', kitchenOrders.length > 0);
   }
   function tickTimers() {
     document.querySelectorAll('[data-timer]').forEach(el => {
@@ -256,24 +282,212 @@
       el.textContent = '⏱ ' + min + 'm';
       el.className = 'ml-auto px-2.5 py-1 rounded-lg font-mono font-black tabular-nums ' + timerClass(min);
     });
-  }
-  async function setKs(orderId, ks) {
-    try {
-      const res = await fetch('/api/kitchen/order-status', {
-        method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ order_id: orderId, kitchen_status: ks })
-      });
-      const data = await res.json();
-      if (data.success) loadKitchen(false);
-      else alert('Gagal: ' + (data.message || 'error'));
-    } catch (e) { alert('Koneksi gagal'); }
+    // alarm zona merah (sekali per order)
+    kitchenOrders.forEach(o => {
+      if (elapsedMin(o) > 15 && !redWarned.has(o.id) && o.kitchenStatus !== 'served') {
+        redWarned.add(o.id);
+        if (soundOn) playAlarm();
+      }
+    });
   }
 
-  // ---------- Stok bahan ----------
+  // ---------- Render pesanan ----------
+  function typeBadge(o) {
+    const t = (o.orderType || '').toLowerCase(), toc = o.tableOrCustomer || '';
+    if (t === 'dine-in' || /^meja/i.test(toc)) return `<span class="px-2 py-0.5 rounded-lg bg-sky-800 text-sky-100 text-xs font-black">🍽️ ${esc(toc || 'Dine-in')}</span>`;
+    if (t === 'takeaway') return `<span class="px-2 py-0.5 rounded-lg bg-violet-800 text-violet-100 text-xs font-black">🛍️ Takeaway${toc ? ' • ' + esc(toc) : ''}</span>`;
+    return `<span class="px-2 py-0.5 rounded-lg bg-stone-700 text-stone-200 text-xs font-black">🛵 ${esc(toc || t || '-')}</span>`;
+  }
+  function noteHtml(note) {
+    if (!note) return '';
+    const n = String(note).toLowerCase();
+    const hot = /pedas|spicy|alergi|alergy|allergy|tidak|jangan|no |tanpa|extra/.test(n);
+    return `<div class="mt-1 px-2 py-1 rounded-lg text-xs font-black ${hot ? 'bg-red-600 text-white timer-warn' : 'bg-amber-900/60 text-amber-200 italic'}">⚠️ ${esc(note)}</div>`;
+  }
+  function stationItems(o) {
+    const items = Array.isArray(o.items) ? o.items : [];
+    if (!activeStation || expoMode) return { items, hidden: 0 };
+    const mine = [], other = [];
+    items.forEach((it, i) => { ((menuStationMap[it.id] || '') === activeStation ? mine : other).push({ it, i }); });
+    return { items: mine, hidden: other.length };
+  }
+  function orderCard(o, flash) {
+    const min = elapsedMin(o);
+    const { items, hidden } = stationItems(o);
+    if (!expoMode && activeStation && !items.length) return '';
+    const itemsHtml = items.map(({ it, i }) => {
+      const done = !!it.kdsDone;
+      return `<div class="py-1.5 border-b border-stone-700/60 last:border-0 ${done ? 'item-done' : ''}">
+        <button onclick="toggleItem('${esc(o.id)}',${i},${done ? 'false' : 'true'})" class="w-full flex items-start gap-2 text-left">
+          <span class="mt-0.5 w-6 h-6 rounded-lg border-2 ${done ? 'bg-emerald-500 border-emerald-500 text-black' : 'border-stone-500'} flex items-center justify-center font-black text-sm shrink-0">${done ? '✓' : ''}</span>
+          <span class="min-w-[2.2rem] text-center px-1 py-0.5 rounded-lg bg-red-800 text-white font-black text-sm">${esc(it.qty)}×</span>
+          <span class="flex-1">
+            <button onclick="event.stopPropagation();openSop('${esc(it.id)}','${esc((it.name || '').replace(/'/g, ''))}')" class="font-bold leading-tight underline decoration-dotted underline-offset-2 hover:text-amber-300">${esc(it.name)}</button>
+            ${noteHtml(it.note)}
+          </span>
+        </button>
+      </div>`;
+    }).join('');
+    const ks = o.kitchenStatus;
+    let btn = '';
+    if (ks === 'held') btn = `<button onclick="setKs('${esc(o.id)}','new')" class="w-full py-3 rounded-xl bg-amber-500 hover:bg-amber-400 text-black font-black text-base">🔥 FIRE! MASAK SEKARANG</button>`;
+    else if (ks === 'new') btn = `<div class="flex gap-2"><button onclick="setKs('${esc(o.id)}','held')" class="px-4 py-3 rounded-xl bg-stone-700 hover:bg-stone-600 font-black" title="Tahan dulu">⏸️</button><button onclick="setKs('${esc(o.id)}','preparing')" class="flex-1 py-3 rounded-xl bg-amber-500 hover:bg-amber-400 text-black font-black text-base">🔥 MULAI MASAK</button></div>`;
+    else if (ks === 'preparing') btn = `<button onclick="setKs('${esc(o.id)}','ready')" class="w-full py-3 rounded-xl bg-emerald-500 hover:bg-emerald-400 text-black font-black text-base">✅ SIAP</button>`;
+    else if (ks === 'ready') btn = `<div class="space-y-2">
+        ${o.runnerCalledAt ? `<div class="text-center text-xs font-black text-sky-300">📢 PELAYAN DIPANGGIL ${esc(new Date(o.runnerCalledAt).toLocaleTimeString('id-ID', { hour: '2-digit', minute: '2-digit' }))}</div>`
+          : `<button onclick="callRunner('${esc(o.id)}')" class="w-full py-2.5 rounded-xl bg-sky-700 hover:bg-sky-600 font-black">📢 PANGGIL PELAYAN</button>`}
+        <div class="flex gap-2">
+          <button onclick="setKs('${esc(o.id)}','preparing')" class="px-3 py-3 rounded-xl bg-stone-700 hover:bg-stone-600 font-bold text-sm" title="Kembalikan">↩️</button>
+          <button onclick="setKs('${esc(o.id)}','served')" class="flex-1 py-3 rounded-xl bg-stone-600 hover:bg-stone-500 font-black text-base">🍽️ SELESAI</button>
+        </div></div>`;
+    const doneCount = items.filter(({ it }) => it.kdsDone).length;
+    return `<div id="kord-${esc(o.id)}" class="rounded-2xl bg-stone-900 border-2 ${ks === 'ready' ? 'border-emerald-500 ready-flash' : 'border-stone-700'} p-4 shadow-lg ${flash ? 'new-flash' : ''} ${expoMode ? 'max-w-3xl mx-auto w-full' : ''}">
+      <div class="flex items-center gap-2 mb-2">
+        <span class="font-mono font-black text-lg text-white">${esc(o.id)}</span>
+        ${o.kitchenBy ? `<span class="text-[11px] font-bold text-amber-300">🧑‍🍳 ${esc(o.kitchenBy)}</span>` : ''}
+        <span class="ml-auto px-2.5 py-1 rounded-lg font-mono font-black tabular-nums ${timerClass(min)}" data-timer="${esc(o.createdAt)}">⏱ ${min}m</span>
+      </div>
+      <div class="flex items-center gap-2 mb-2 flex-wrap">${typeBadge(o)}
+        ${o.customerName ? `<span class="text-xs text-stone-400 font-semibold">${esc(o.customerName)}</span>` : ''}
+        ${items.length ? `<span class="text-[11px] text-stone-500 font-bold">${doneCount}/${items.length} jadi</span>` : ''}
+      </div>
+      <div class="mb-3">${itemsHtml || '<p class="text-xs text-stone-500 italic">Tidak ada item stasiun ini.</p>'}</div>
+      ${hidden ? `<p class="text-[11px] text-stone-500 italic mb-2">+ ${hidden} item stasiun lain</p>` : ''}
+      ${btn}
+    </div>`;
+  }
+  function renderOrders(flashIds) {
+    const cols = { held: [], new: [], preparing: [], ready: [] };
+    kitchenOrders.forEach(o => { (cols[o.kitchenStatus] || cols.new).push(o); });
+    const grid = document.getElementById('kanban');
+    if (expoMode) {
+      grid.className = 'space-y-4 max-w-4xl mx-auto';
+      grid.innerHTML = `<section><div class="flex items-center gap-2 mb-3"><h2 class="font-black text-sky-400 tracking-wide text-lg">🖥️ EXPO — SEMUA TIKET AKTIF</h2><span class="ml-auto font-black">${kitchenOrders.length}</span></div>
+        <div class="space-y-4">${kitchenOrders.map(o => orderCard(o, flashIds.includes(o.id))).join('') || '<p class="text-stone-500">Sepi.</p>'}</div></section>`;
+    } else {
+      grid.className = 'grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 gap-4 items-start';
+      const defs = [
+        ['held', 'DITAHAN', 'bg-stone-500', 'text-stone-400', 'bg-stone-800 text-stone-300'],
+        ['new', 'BARU', 'bg-red-500 animate-pulse', 'text-red-400', 'bg-red-900/60 text-red-200'],
+        ['preparing', 'DIMASAK', 'bg-amber-400', 'text-amber-400', 'bg-amber-900/60 text-amber-200'],
+        ['ready', 'SIAP', 'bg-emerald-400', 'text-emerald-400', 'bg-emerald-900/60 text-emerald-200']
+      ];
+      grid.innerHTML = defs.map(([k, label, dot, tc, cc]) => `
+        <section class="${k === 'held' && !cols.held.length ? 'hidden' : ''}">
+          <div class="flex items-center gap-2 mb-3 px-1"><span class="w-3 h-3 rounded-full ${dot}"></span><h2 class="font-black ${tc} tracking-wide">${label}</h2><span class="ml-auto px-2 py-0.5 rounded-lg ${cc} font-black text-sm">${cols[k].length}</span></div>
+          <div class="space-y-3">${cols[k].map(o => orderCard(o, flashIds.includes(o.id))).join('')}</div>
+        </section>`).join('');
+    }
+    document.getElementById('count-active').textContent = kitchenOrders.length;
+    document.getElementById('kitchen-empty').classList.toggle('hidden', kitchenOrders.length > 0 || expoMode);
+  }
+  function renderStationTabs() {
+    const bar = document.getElementById('station-bar');
+    bar.classList.remove('hidden'); bar.classList.add('flex');
+    const stations = [...new Set(kitchenMenus.map(m => m.station).filter(Boolean))].sort();
+    const tabs = ['', ...stations];
+    document.getElementById('station-tabs').innerHTML = tabs.map(s =>
+      `<button onclick="setStation('${esc(s)}')" class="px-4 py-1.5 rounded-xl text-xs font-black ${activeStation === s ? 'bg-amber-500 text-black' : 'bg-stone-800 text-stone-300 border border-stone-600'}">${s ? esc(s) : 'Semua'}</button>`
+    ).join('');
+    const ex = document.getElementById('expo-toggle');
+    ex.textContent = expoMode ? '🖥️ MODE EXPO: ON' : '🖥️ MODE EXPO: OFF';
+    ex.className = 'ml-auto px-4 py-1.5 rounded-xl text-xs font-black ' + (expoMode ? 'bg-sky-600 text-white' : 'bg-stone-800 text-stone-300 border border-stone-600');
+  }
+  function setStation(s) { activeStation = s; renderStationTabs(); renderOrders([]); }
+  function toggleExpo() { expoMode = !expoMode; renderStationTabs(); renderOrders([]); }
+  async function setKs(orderId, ks) {
+    try {
+      const res = await fetch('/api/kitchen/order-status', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ order_id: orderId, kitchen_status: ks, kitchen_by: kitchenCrew ? kitchenCrew.name : '' }) });
+      const data = await res.json();
+      if (data.success) loadKitchen(false); else alert('Gagal: ' + (data.message || 'error'));
+    } catch (e) { alert('Koneksi gagal'); }
+  }
+  async function toggleItem(orderId, idx, done) {
+    try {
+      const res = await fetch('/api/kitchen/item-status', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ order_id: orderId, item_index: idx, done, kitchen_by: kitchenCrew ? kitchenCrew.name : '' }) });
+      const data = await res.json();
+      if (data.success) loadKitchen(false); else alert('Gagal: ' + (data.message || 'error'));
+    } catch (e) { alert('Koneksi gagal'); }
+  }
+  async function callRunner(orderId) {
+    try {
+      const res = await fetch('/api/kitchen/call-runner', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ order_id: orderId }) });
+      const data = await res.json();
+      if (data.success) { if (soundOn) playBeep(); loadKitchen(false); } else alert('Gagal: ' + (data.message || 'error'));
+    } catch (e) { alert('Koneksi gagal'); }
+  }
+  function renderRecall() {
+    const box = document.getElementById('recall-list');
+    box.innerHTML = recentOrders.map(o => `
+      <div class="rounded-2xl bg-stone-900 border border-stone-700 p-3 flex items-center gap-3">
+        <div class="flex-1"><div class="font-mono font-black">${esc(o.id)}</div><div class="text-xs text-stone-500">${esc(o.tableOrCustomer || '')} • ${esc(new Date(o.createdAt).toLocaleTimeString('id-ID', { hour: '2-digit', minute: '2-digit' }))}</div></div>
+        <button onclick="setKs('${esc(o.id)}','ready')" class="px-3 py-2 rounded-xl bg-stone-700 hover:bg-stone-600 text-sm font-black">↩️ Recall</button>
+      </div>`).join('') || '<p class="text-sm text-stone-500">Tidak ada.</p>';
+  }
+
+  // ---------- Ringkasan ----------
+  function renderSummary() {
+    const agg = {};
+    kitchenOrders.forEach(o => {
+      if (o.kitchenStatus === 'held' || o.kitchenStatus === 'served') return;
+      (Array.isArray(o.items) ? o.items : []).forEach(it => {
+        if (it.kdsDone) return;
+        const key = it.name || '?';
+        if (!agg[key]) agg[key] = { qty: 0, tables: new Set() };
+        agg[key].qty += Number(it.qty) || 0;
+        if (o.tableOrCustomer) agg[key].tables.add(o.tableOrCustomer);
+      });
+    });
+    const keys = Object.keys(agg).sort((a, b) => agg[b].qty - agg[a].qty);
+    document.getElementById('summary-empty').classList.toggle('hidden', keys.length > 0);
+    document.getElementById('summary-grid').innerHTML = keys.map(k => `
+      <div class="rounded-2xl bg-stone-900 border border-stone-700 p-4">
+        <button onclick="openSopByName('${esc(k).replace(/'/g, "\\'")}')" class="font-black text-lg leading-tight underline decoration-dotted underline-offset-2 hover:text-amber-300 text-left">${esc(k)}</button>
+        <div class="font-mono font-black text-3xl text-amber-400 mt-1">${agg[k].qty} <span class="text-sm text-stone-500">porsi</span></div>
+        <div class="text-xs text-stone-500 mt-1">${[...agg[k].tables].map(esc).join(', ')}</div>
+      </div>`).join('');
+  }
+
+  // ---------- Kontrol: 86, waste, stok ----------
+  function renderMenu86() {
+    document.getElementById('menu86-grid').innerHTML = kitchenMenus.map(m => `
+      <div class="rounded-2xl p-3 border ${m.inStock ? 'bg-stone-900 border-stone-700' : 'bg-red-950/60 border-red-700'}">
+        <div class="font-bold text-sm leading-tight mb-2 truncate" title="${esc(m.name)}">${esc(m.name)}${m.isCentral ? ' <span class="text-[9px] text-indigo-300">PUSAT</span>' : ''}</div>
+        <button onclick="set86('${esc(m.id)}',${m.inStock ? 'false' : 'true'})" class="w-full py-2 rounded-xl font-black text-sm ${m.inStock ? 'bg-stone-700 hover:bg-stone-600 text-stone-300' : 'bg-red-600 hover:bg-red-500 text-white'}">${m.inStock ? 'TERSEDIA' : '86 HABIS'}</button>
+      </div>`).join('');
+  }
+  async function set86(menuId, inStock) {
+    try {
+      const res = await fetch('/api/kitchen/menu-stock', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ menu_id: menuId, in_stock: inStock }) });
+      const data = await res.json();
+      if (data.success) {
+        const m = kitchenMenus.find(x => x.id === menuId);
+        if (m) { m.inStock = inStock; if (!inStock) m.stockQty = 0; }
+        renderMenu86();
+      } else alert('Gagal: ' + (data.message || 'error'));
+    } catch (e) { alert('Koneksi gagal'); }
+  }
+  function renderWasteIng() {
+    document.getElementById('waste-ing').innerHTML = kitchenIngredients.map(g => `<option value="${esc(g.id)}">${esc(g.name)} (${esc(g.stock)} ${esc(g.unit)})</option>`).join('');
+  }
+  async function submitWaste() {
+    const msg = document.getElementById('waste-msg');
+    try {
+      const res = await fetch('/api/kitchen/waste', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({
+        ingredient_id: document.getElementById('waste-ing').value,
+        qty: parseFloat(document.getElementById('waste-qty').value) || 0,
+        reason: document.getElementById('waste-reason').value,
+        note: document.getElementById('waste-note').value,
+        reported_by: kitchenCrew ? kitchenCrew.name + ' (Dapur)' : 'Dapur'
+      }) });
+      const data = await res.json();
+      msg.classList.remove('hidden');
+      if (data.success) { msg.textContent = '✅ Tercatat.'; msg.className = 'text-sm font-bold text-center text-emerald-400'; document.getElementById('waste-qty').value = ''; document.getElementById('waste-note').value = ''; loadKitchen(false); }
+      else { msg.textContent = 'Gagal: ' + (data.message || 'error'); msg.className = 'text-sm font-bold text-center text-red-400'; }
+    } catch (e) { msg.classList.remove('hidden'); msg.textContent = 'Koneksi gagal'; msg.className = 'text-sm font-bold text-center text-red-400'; }
+  }
   function renderStock() {
-    const grid = document.getElementById('stock-grid');
-    document.getElementById('stock-empty').classList.toggle('hidden', kitchenIngredients.length > 0);
-    grid.innerHTML = kitchenIngredients.map(g => `
+    document.getElementById('stock-grid').innerHTML = kitchenIngredients.map(g => `
       <div class="rounded-2xl p-4 border ${g.low ? 'bg-red-950/60 border-red-700' : 'bg-stone-900 border-stone-700'}">
         <div class="font-bold leading-tight mb-1">${esc(g.name)} ${g.low ? '⚠️' : ''}</div>
         <div class="font-mono font-black text-xl ${g.low ? 'text-red-400' : 'text-emerald-400'}">${esc(g.stock)} <span class="text-xs font-bold text-stone-400">${esc(g.unit)}</span></div>
@@ -281,44 +495,59 @@
       </div>`).join('');
   }
 
+  // ---------- SOP ----------
+  function openSop(menuId, menuName) {
+    let rec = kitchenRecipes.find(r => r.id === menuId);
+    if (!rec) { // cari by nama (dari ringkasan)
+      rec = kitchenRecipes.find(r => r.name === menuName);
+    }
+    if (!rec) { alert('Resep tidak ditemukan.'); return; }
+    document.getElementById('sop-title').textContent = rec.name;
+    const img = document.getElementById('sop-img');
+    if (rec.image) { img.style.display = ''; img.src = rec.image; } else img.style.display = 'none';
+    document.getElementById('sop-desc').textContent = rec.description || '';
+    document.getElementById('sop-recipe').innerHTML = rec.recipe.length
+      ? rec.recipe.map(it => `<div class="flex justify-between bg-stone-800 rounded-xl px-3 py-2 text-sm"><span class="font-bold">${esc(it.name)}</span><span class="font-mono text-amber-300">${esc(it.amount)} ${esc(it.unit)}</span></div>`).join('')
+      : '<p class="text-sm text-stone-500 italic">Belum ada resep.</p>';
+    document.getElementById('sop-modal').classList.remove('hidden');
+    if (window.lucide) lucide.createIcons();
+  }
+  function openSopByName(name) { const r = kitchenRecipes.find(x => x.name === name); if (r) openSop(r.id, r.name); else alert('Resep tidak ditemukan.'); }
+  function closeSop() { document.getElementById('sop-modal').classList.add('hidden'); }
+
   // ---------- Tab, jam, bunyi ----------
   function switchTab(t) {
     currentTab = t;
-    document.getElementById('tab-orders').classList.toggle('hidden', t !== 'orders');
-    document.getElementById('tab-stock').classList.toggle('hidden', t !== 'stock');
-    const on = 'px-5 py-2 rounded-xl font-black text-sm bg-red-700 text-white';
-    const off = 'px-5 py-2 rounded-xl font-black text-sm bg-stone-800 text-stone-300 border border-stone-700';
-    document.getElementById('tab-btn-orders').className = t === 'orders' ? on : off;
-    document.getElementById('tab-btn-stock').className = t === 'stock' ? on : off;
-    if (t === 'stock') loadKitchen(true);
+    ['orders', 'summary', 'control'].forEach(x => {
+      document.getElementById('tab-' + x).classList.toggle('hidden', x !== t);
+      document.getElementById('tab-btn-' + x).className = 'px-5 py-2 rounded-xl font-black text-sm ' + (x === t ? 'bg-red-700 text-white' : 'bg-stone-800 text-stone-300 border border-stone-700');
+    });
+    document.getElementById('station-bar').classList.toggle('hidden', t !== 'orders');
+    document.getElementById('station-bar').classList.toggle('flex', t === 'orders');
+    loadKitchen(true);
   }
   function tickClock() {
     const d = new Date(Date.now() + 7 * 3600000 - new Date().getTimezoneOffset() * 60000);
-    document.getElementById('clock').textContent =
-      String(d.getUTCHours()).padStart(2, '0') + ':' + String(d.getUTCMinutes()).padStart(2, '0') + ':' + String(d.getUTCSeconds()).padStart(2, '0');
+    document.getElementById('clock').textContent = String(d.getUTCHours()).padStart(2, '0') + ':' + String(d.getUTCMinutes()).padStart(2, '0') + ':' + String(d.getUTCSeconds()).padStart(2, '0');
   }
   setInterval(tickClock, 1000);
-  function toggleSound() {
-    soundOn = !soundOn;
-    document.getElementById('btn-sound').textContent = soundOn ? '🔔' : '🔕';
-  }
+  function toggleSound() { soundOn = !soundOn; document.getElementById('btn-sound').textContent = soundOn ? '🔔' : '🔕'; }
   let audioCtx = null;
-  function playBeep() {
+  function tone(freq, delay, dur) {
     try {
       audioCtx = audioCtx || new (window.AudioContext || window.webkitAudioContext)();
-      [0, 0.25, 0.5].forEach((delay, i) => {
-        const osc = audioCtx.createOscillator();
-        const gain = audioCtx.createGain();
-        osc.connect(gain); gain.connect(audioCtx.destination);
-        osc.frequency.value = i === 2 ? 880 : 660;
-        const t0 = audioCtx.currentTime + delay;
-        gain.gain.setValueAtTime(0.001, t0);
-        gain.gain.exponentialRampToValueAtTime(0.5, t0 + 0.02);
-        gain.gain.exponentialRampToValueAtTime(0.001, t0 + 0.2);
-        osc.start(t0); osc.stop(t0 + 0.22);
-      });
+      const osc = audioCtx.createOscillator(), gain = audioCtx.createGain();
+      osc.connect(gain); gain.connect(audioCtx.destination);
+      osc.frequency.value = freq;
+      const t0 = audioCtx.currentTime + delay;
+      gain.gain.setValueAtTime(0.001, t0);
+      gain.gain.exponentialRampToValueAtTime(0.5, t0 + 0.02);
+      gain.gain.exponentialRampToValueAtTime(0.001, t0 + dur);
+      osc.start(t0); osc.stop(t0 + dur + 0.02);
     } catch (e) {}
   }
+  function playBeep() { tone(660, 0, 0.2); tone(660, 0.25, 0.2); tone(880, 0.5, 0.25); }
+  function playAlarm() { for (let i = 0; i < 3; i++) { tone(440, i * 0.3, 0.2); tone(560, i * 0.3 + 0.15, 0.2); } }
 
   initKitchen();
 </script>
