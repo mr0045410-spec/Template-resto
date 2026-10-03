@@ -376,7 +376,7 @@
   }
   function stationItems(o) {
     const items = Array.isArray(o.items) ? o.items : [];
-    if (!activeStation || expoMode) return { items, hidden: 0 };
+    if (!activeStation || expoMode) return { items: items.map((it, i) => ({ it, i })), hidden: 0 };
     const mine = [], other = [];
     items.forEach((it, i) => { ((menuStationMap[it.id] || '') === activeStation ? mine : other).push({ it, i }); });
     return { items: mine, hidden: other.length };
