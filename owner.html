@@ -3,7 +3,7 @@
 <head>
   <script src="brand-config.js"></script>
   <script>window.__mykitchenOutletKey = 'mykitchen_owner_outlet_filter';</script>
-  <script src="api-supabase.js?v=20261003p"></script>
+  <script src="api-supabase.js?v=20261003q"></script>
   <!-- api-shim: ganti /api/* dgn localStorage (perbaikan persistensi utk hosting statis) -->
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
@@ -2231,7 +2231,12 @@
       const tabs = ROLE_TABS[role] || ROLE_TABS.owner;
       ['finance', 'inventory', 'staff', 'accounting', 'po', 'promo'].forEach(t => {
         const btn = document.getElementById('view-tab-' + t);
-        if (btn) btn.classList.toggle('hidden', tabs.indexOf(t) < 0);
+        if (!btn) return;
+        const hide = tabs.indexOf(t) < 0;
+        // CATATAN: tombol tab pakai display:flex -> 'hidden' saja tidak cukup
+        // (kalah spesifisitas); toggle 'flex' juga.
+        btn.classList.toggle('hidden', hide);
+        btn.classList.toggle('flex', !hide);
       });
       // Kalau tab yang sedang aktif tidak boleh dibuka peran ini -> ke finance
       const allowed = ROLE_TABS[role] || ROLE_TABS.owner;
@@ -2254,8 +2259,9 @@
     function renderUserBadge() {
       const el = document.getElementById('portal-user-badge');
       if (!el) return;
-      if (!portalSession) { el.classList.add('hidden'); return; }
+      if (!portalSession) { el.classList.add('hidden'); el.classList.remove('flex'); return; }
       el.classList.remove('hidden');
+      el.classList.add('flex');
       el.innerHTML = `<span class="font-bold text-stone-700">${escapeOwnerHtml(portalSession.name)}</span>
         <span class="px-2 py-0.5 rounded-full text-[10px] font-black bg-amber-100 text-amber-900 border border-amber-300 uppercase tracking-wide">${ROLE_LABEL[portalSession.role] || portalSession.role}</span>`;
     }
