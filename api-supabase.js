@@ -360,6 +360,53 @@
   }
   function validUsername(u) { return /^[a-zA-Z0-9._-]{3,30}$/.test(u); }
 
+  /* ---- Approval void/refund per peran (fase 2d) ----
+     Urutan: (a) sesi portal yg berwenang atas outlet order;
+             (b) owner_pin (kompatibilitas lama);
+             (c) approver_pin = PIN pegawai manajer (store/area) yg berwenang.
+     Mengembalikan { name, roleLabel } atau null. */
+  function resolveApprover(body, order) {
+    var outletId = order.outlet_id || 'outlet-1';
+    function viaSession() {
+      var s = getPortalSession();
+      if (!s || !s.id) return Promise.resolve(null);
+      if (s.role === 'owner') return Promise.resolve({ name: s.name || 'Owner', roleLabel: 'Owner' });
+      if ((s.role === 'store_manager' || s.role === 'area_manager') && sessionCanOutlet(s, outletId)) {
+        return Promise.resolve({ name: s.name, roleLabel: s.role === 'store_manager' ? 'Store Manager' : 'Area Manager' });
+      }
+      return Promise.resolve(null);
+    }
+    function viaPin() {
+      var pin = String(body.owner_pin || body.approver_pin || '').trim();
+      if (!pin) return Promise.resolve(null);
+      return sel('settings', 'select=value&key=eq.owner_pin').then(function (sr) {
+        var expectedPin = sr.length ? String(sr[0].value || '') : '1234';
+        if (pin === expectedPin) return { name: 'Owner', roleLabel: 'Owner' };
+        var pinHash = hashPin(pin);
+        return sel('employees', 'select=id,name,role,active,outlet_id,pin_hash', { allOutlets: true }).then(function (emps) {
+          var cands = (emps || []).filter(function (e) { return e.active !== false && e.pin_hash === pinHash; });
+          if (!cands.length) return null;
+          var rank = { owner: 3, area_manager: 2, store_manager: 1 };
+          cands.sort(function (a, b) { return (rank[b.role] || 0) - (rank[a.role] || 0); });
+          var chain = Promise.resolve(null);
+          cands.forEach(function (e) {
+            chain = chain.then(function (found) {
+              if (found) return found;
+              if (e.role === 'owner') return { name: e.name, roleLabel: 'Owner' };
+              if (e.role !== 'store_manager' && e.role !== 'area_manager') return null;
+              return employeeScopeIds(e).then(function (ids) {
+                if (ids.indexOf(outletId) < 0) return null;
+                return { name: e.name, roleLabel: e.role === 'store_manager' ? 'Store Manager' : 'Area Manager' };
+              });
+            });
+          });
+          return chain;
+        });
+      });
+    }
+    return viaSession().then(function (a) { return a ? a : viaPin(); });
+  }
+
   function rowToShift(r) {
     return {
       id: r.id, employeeId: r.employee_id, employeeName: r.employee_name || '',
@@ -3519,20 +3566,25 @@
     });
   }
 
-  // 44. POST /api/orders/void — { order_id, owner_pin, reason, voided_by }
-  //     Hanya order completed; butuh PIN owner (disamakan dgn settings.owner_pin).
+  // 44. POST /api/orders/void — { order_id, reason, voided_by?, owner_pin?, approver_pin? }
+  //     Approval per peran (fase 2d): sesi portal owner / manajer yg berwenang
+  //     atas outlet order; fallback owner_pin (lama) atau approver_pin (PIN manajer).
   //     Efek: status -> voided, jurnal reversal otomatis, stok dikembalikan,
   //     tercatat di void_logs. Tidak bisa void 2x.
   routes['POST /api/orders/void'] = function (body) {
     return needSettings().then(function (blocked) {
       if (blocked) return blocked;
       if (!body.order_id) return bad({ success: false, message: 'ID order wajib diisi' });
-      return sel('settings', 'select=value&key=eq.owner_pin').then(function (sr) {
-        var expectedPin = sr.length ? String(sr[0].value || '') : '1234';
-        if (String(body.owner_pin || '') !== expectedPin) {
-          return json({ success: false, message: 'PIN owner salah' }, 403);
-        }
-        return doVoidOrder(body);
+      if (!String(body.reason || '').trim()) return bad({ success: false, message: 'Alasan void wajib diisi' });
+      return sel('orders', 'select=id,outlet_id,status&id=eq.' + encodeURIComponent(body.order_id) + '&limit=1', { allOutlets: true }).then(function (orows) {
+        if (!orows.length) return notFound({ success: false, message: 'Order tidak ditemukan' });
+        return resolveApprover(body, orows[0]).then(function (approver) {
+          if (!approver) {
+            return json({ success: false, message: 'Tidak berwenang mem-void order ini. Butuh persetujuan Owner / manajer outlet terkait.' }, 403);
+          }
+          body.voided_by = approver.name + ' (' + approver.roleLabel + ')';
+          return doVoidOrder(body);
+        });
       });
     }).catch(serverError);
   };
@@ -3566,7 +3618,9 @@
     }).catch(serverError);
   };
 
-  // 44c. POST /api/orders/refund — { order_id, owner_pin, amount, reason, refunded_by }
+  // 44c. POST /api/orders/refund — { order_id, amount, reason, refunded_by?, owner_pin?, approver_pin? }
+  //     Approval per peran (fase 2d): sesi portal owner / manajer yg berwenang
+  //     atas outlet order; fallback owner_pin (lama) atau approver_pin (PIN manajer).
   //     Pengembalian uang TANPA membatalkan order (beda dari void):
   //     order tetap completed, stok TIDAK dikembalikan, hanya kas keluar.
   //     Jurnal (non-fatal): Dr 4110 Potongan Penjualan / Kr 1100 Kas (1120 bila non-tunai).
@@ -3577,17 +3631,16 @@
       if (!body.order_id) return bad({ success: false, message: 'ID order wajib diisi' });
       var amount = Math.round(Number(body.amount) || 0);
       var reason = String(body.reason || '').slice(0, 200);
-      var refundedBy = String(body.refunded_by || 'Owner').slice(0, 60);
       if (!reason) return bad({ success: false, message: 'Alasan refund wajib diisi' });
       if (!(amount > 0)) return bad({ success: false, message: 'Nominal refund harus lebih dari Rp 0' });
-      return sel('settings', 'select=value&key=eq.owner_pin').then(function (sr) {
-        var expectedPin = sr.length ? String(sr[0].value || '') : '1234';
-        if (String(body.owner_pin || '') !== expectedPin) {
-          return json({ success: false, message: 'PIN owner salah' }, 403);
-        }
-        return sel('orders', 'select=*&id=eq.' + encodeURIComponent(body.order_id)).then(function (orows) {
-          if (!orows.length) return notFound({ success: false, message: 'Order tidak ditemukan' });
-          var o = orows[0];
+      return sel('orders', 'select=*&id=eq.' + encodeURIComponent(body.order_id), { allOutlets: true }).then(function (orows) {
+        if (!orows.length) return notFound({ success: false, message: 'Order tidak ditemukan' });
+        var o = orows[0];
+        return resolveApprover(body, o).then(function (approver) {
+          if (!approver) {
+            return json({ success: false, message: 'Tidak berwenang me-refund order ini. Butuh persetujuan Owner / manajer outlet terkait.' }, 403);
+          }
+          var refundedBy = String(approver.name + ' (' + approver.roleLabel + ')').slice(0, 60);
           if (o.status !== 'completed') {
             return bad({ success: false, message: 'Hanya order completed yang bisa di-refund (status: ' + (o.status || '-') + ')' });
           }
