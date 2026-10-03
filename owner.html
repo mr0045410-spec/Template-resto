@@ -3,7 +3,7 @@
 <head>
   <script src="brand-config.js"></script>
   <script>window.__mykitchenOutletKey = 'mykitchen_owner_outlet_filter';</script>
-  <script src="api-supabase.js?v=20261003o"></script>
+  <script src="api-supabase.js?v=20261003p"></script>
   <!-- api-shim: ganti /api/* dgn localStorage (perbaikan persistensi utk hosting statis) -->
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
@@ -82,22 +82,26 @@
       <div class="w-16 h-16 rounded-2xl bg-red-100 flex items-center justify-center mx-auto mb-4 border border-red-200 text-brand">
         <i data-lucide="crown" class="w-8 h-8"></i>
       </div>
-      <h2 class="text-2xl font-extrabold text-[#450A0A]">Portal Pemilik (Owner)</h2>
-      <p class="text-xs text-stone-500 mt-1 mb-6">Masukkan PIN Owner untuk melihat laporan omset & keuntungan resto</p>
+      <h2 class="text-2xl font-extrabold text-[#450A0A]">Portal Manajemen</h2>
+      <p class="text-xs text-stone-500 mt-1 mb-6">Masuk dengan username & password sesuai peran kamu</p>
 
       <form id="owner-auth-form" onsubmit="handleOwnerLogin(event)" class="space-y-4">
         <div>
-          <input type="password" id="owner-pin-input" maxlength="6" inputmode="numeric" placeholder="PIN Owner (1234)" 
-                 class="w-full text-center text-2xl tracking-[0.4em] font-mono py-3 px-4 rounded-2xl border-2 border-red-200 focus:border-brand focus:outline-none transition-colors bg-red-50/50 text-[#450A0A]" required autofocus>
-          <p id="owner-pin-error" class="hidden text-xs text-red-600 font-semibold mt-2">PIN salah! Silakan coba lagi.</p>
+          <input type="text" id="owner-username-input" placeholder="Username" autocomplete="username"
+                 class="w-full px-4 py-3 rounded-2xl border-2 border-red-200 focus:border-brand focus:outline-none transition-colors bg-red-50/50 text-[#450A0A] text-sm" required autofocus>
+        </div>
+        <div>
+          <input type="password" id="owner-password-input" placeholder="Password" autocomplete="current-password"
+                 class="w-full px-4 py-3 rounded-2xl border-2 border-red-200 focus:border-brand focus:outline-none transition-colors bg-red-50/50 text-[#450A0A] text-sm" required>
+          <p id="owner-login-error" class="hidden text-xs text-red-600 font-semibold mt-2"></p>
         </div>
         <button type="submit" class="w-full py-3.5 px-4 rounded-full bg-brand hover:bg-brand-hover text-white font-bold text-sm shadow-lg shadow-brand/30 transition-all hover:scale-[1.02] flex items-center justify-center gap-2">
           <i data-lucide="unlock" class="w-4 h-4"></i>
-          <span>Buka Dashboard Owner</span>
+          <span>Masuk Portal</span>
         </button>
       </form>
       <div class="mt-5 text-[11px] text-stone-400">
-        Default PIN: <strong class="text-stone-600 font-mono">1234</strong>
+        Owner default: username <strong class="text-stone-600 font-mono">owner</strong>
       </div>
     </div>
   </div>
@@ -173,6 +177,7 @@
 
         <!-- Quick link to POS / Admin -->
         <div class="hidden lg:flex items-center gap-1.5 pl-2 border-l border-stone-200">
+          <span id="portal-user-badge" class="hidden items-center gap-2 px-2.5 py-1.5 rounded-xl bg-stone-100 border border-stone-200 text-xs mr-1"></span>
           <a href="/pos.html" target="_blank" class="p-2 rounded-xl text-stone-600 hover:text-brand hover:bg-red-50 transition-colors" title="Buka Kasir POS">
             <i data-lucide="calculator" class="w-4 h-4"></i>
           </a>
@@ -774,8 +779,8 @@
     <!-- VIEW 3: PEGAWAI & SHIFT KASIR -->
     <div id="owner-view-staff" class="hidden space-y-6">
 
-      <!-- Section: Kelola Outlet -->
-      <div class="bg-white rounded-3xl p-5 sm:p-6 border border-stone-200/80 shadow-xs">
+      <!-- Section: Kelola Outlet (hanya owner) -->
+      <div id="kelola-outlet-section" class="bg-white rounded-3xl p-5 sm:p-6 border border-stone-200/80 shadow-xs">
         <div class="flex items-center justify-between mb-4">
           <div>
             <h3 class="text-base font-extrabold text-[#450A0A] flex items-center gap-2">
@@ -794,38 +799,38 @@
         </div>
       </div>
 
-      <!-- Section: Ganti PIN Owner -->
+      <!-- Section: Ganti Password -->
       <div class="bg-white rounded-3xl p-5 sm:p-6 border border-stone-200/80 shadow-xs">
         <div class="mb-4">
           <h3 class="text-base font-extrabold text-[#450A0A] flex items-center gap-2">
             <i data-lucide="key-round" class="w-5 h-5 text-brand"></i>
-            Ganti PIN Owner
+            Ganti Password
           </h3>
-          <p class="text-[11px] text-stone-400 mt-0.5">PIN dipakai untuk login portal owner & admin, dan otorisasi void. 4–6 digit angka.</p>
+          <p class="text-[11px] text-stone-400 mt-0.5">Password akun kamu sendiri. Minimal 6 karakter.</p>
         </div>
         <div class="grid grid-cols-1 sm:grid-cols-3 gap-3 max-w-2xl">
           <div>
-            <label class="text-xs font-bold text-stone-600 mb-1.5 block">PIN Lama *</label>
-            <input id="pin-old" type="password" maxlength="6" inputmode="numeric" placeholder="••••"
-                   class="w-full px-3 py-2 rounded-xl border border-stone-300 text-sm font-mono focus:outline-none focus:border-brand" />
+            <label class="text-xs font-bold text-stone-600 mb-1.5 block">Password Lama *</label>
+            <input id="pw-old" type="password" placeholder="••••••"
+                   class="w-full px-3 py-2 rounded-xl border border-stone-300 text-sm focus:outline-none focus:border-brand" />
           </div>
           <div>
-            <label class="text-xs font-bold text-stone-600 mb-1.5 block">PIN Baru *</label>
-            <input id="pin-new" type="password" maxlength="6" inputmode="numeric" placeholder="4–6 digit angka"
-                   class="w-full px-3 py-2 rounded-xl border border-stone-300 text-sm font-mono focus:outline-none focus:border-brand" />
+            <label class="text-xs font-bold text-stone-600 mb-1.5 block">Password Baru *</label>
+            <input id="pw-new" type="password" placeholder="min. 6 karakter"
+                   class="w-full px-3 py-2 rounded-xl border border-stone-300 text-sm focus:outline-none focus:border-brand" />
           </div>
           <div>
-            <label class="text-xs font-bold text-stone-600 mb-1.5 block">Ulangi PIN Baru *</label>
-            <input id="pin-new2" type="password" maxlength="6" inputmode="numeric" placeholder="••••"
-                   class="w-full px-3 py-2 rounded-xl border border-stone-300 text-sm font-mono focus:outline-none focus:border-brand" />
+            <label class="text-xs font-bold text-stone-600 mb-1.5 block">Ulangi Password Baru *</label>
+            <input id="pw-new2" type="password" placeholder="••••••"
+                   class="w-full px-3 py-2 rounded-xl border border-stone-300 text-sm focus:outline-none focus:border-brand" />
           </div>
         </div>
         <div class="flex flex-wrap items-center gap-3 mt-4">
-          <button onclick="changeOwnerPin()" class="inline-flex items-center gap-1.5 px-4 py-2 rounded-xl bg-brand hover:bg-brand-hover text-white text-xs font-bold shadow-xs transition-colors">
+          <button onclick="changePortalPassword()" class="inline-flex items-center gap-1.5 px-4 py-2 rounded-xl bg-brand hover:bg-brand-hover text-white text-xs font-bold shadow-xs transition-colors">
             <i data-lucide="save" class="w-3.5 h-3.5"></i>
-            <span>Simpan PIN Baru</span>
+            <span>Simpan Password Baru</span>
           </button>
-          <p id="pin-change-status" class="text-[11px] text-stone-400"></p>
+          <p id="pw-change-status" class="text-[11px] text-stone-400"></p>
         </div>
       </div>
 
@@ -2147,41 +2152,54 @@
     let peakHoursChartInstance = null;
     let categoryChartInstance = null;
 
-    // Check login state
-    function checkOwnerAuth() {
-      const isAuth = sessionStorage.getItem('mykitchen_owner_auth');
+    // Check login state (sesi peran portal)
+    let portalSession = null;
+    async function checkOwnerAuth() {
       const overlay = document.getElementById('owner-auth-overlay');
-      if (isAuth === 'true') {
-        overlay.classList.add('hidden');
-        loadOutlets();
-        loadAnalytics();
-        loadIngredients();
-        fetchIngredientsSummaryBadge();
-      } else {
-        overlay.classList.remove('hidden');
-      }
+      try {
+        const res = await fetch('/api/portal/session');
+        const data = await res.json();
+        if (res.ok && data.success && data.session) {
+          portalSession = data.session;
+          sessionStorage.setItem('mykitchen_portal_session', JSON.stringify(portalSession));
+          overlay.classList.add('hidden');
+          applyRoleUI();
+          loadOutlets();
+          loadAnalytics();
+          loadIngredients();
+          fetchIngredientsSummaryBadge();
+          return;
+        }
+      } catch (e) {}
+      portalSession = null;
+      overlay.classList.remove('hidden');
     }
 
     async function handleOwnerLogin(e) {
       e.preventDefault();
-      const pin = document.getElementById('owner-pin-input').value;
-      const errEl = document.getElementById('owner-pin-error');
-      
+      const username = document.getElementById('owner-username-input').value.trim();
+      const password = document.getElementById('owner-password-input').value;
+      const errEl = document.getElementById('owner-login-error');
+      errEl.classList.add('hidden');
       try {
-        const res = await fetch('/api/admin/login', {
+        const res = await fetch('/api/portal/login', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ pin })
+          body: JSON.stringify({ username, password })
         });
         const data = await res.json();
-        if (data.success) {
-          sessionStorage.setItem('mykitchen_owner_auth', 'true');
+        if (res.ok && data.success && data.session) {
+          portalSession = data.session;
+          sessionStorage.setItem('mykitchen_portal_session', JSON.stringify(portalSession));
           document.getElementById('owner-auth-overlay').classList.add('hidden');
+          if (data.migrated) toast('Login pertama: password kamu = PIN lama. Segera ganti di Pegawai & Shift → Ganti Password.', 'warning');
+          applyRoleUI();
           loadOutlets();
           loadAnalytics();
           loadIngredients();
           fetchIngredientsSummaryBadge();
         } else {
+          errEl.textContent = data.message || 'Login gagal. Coba lagi.';
           errEl.classList.remove('hidden');
         }
       } catch (err) {
@@ -2191,8 +2209,55 @@
     }
 
     function logoutOwner() {
-      sessionStorage.removeItem('mykitchen_owner_auth');
+      fetch('/api/portal/logout', { method: 'POST' }).catch(() => {});
+      sessionStorage.removeItem('mykitchen_portal_session');
+      sessionStorage.removeItem('mykitchen_owner_auth'); // sisa era PIN
       window.location.reload();
+    }
+
+    function getPortalRole() { return portalSession ? portalSession.role : 'owner'; }
+    function isOwner() { return getPortalRole() === 'owner'; }
+    const ROLE_LABEL = { owner: 'Owner', area_manager: 'Area Manager', store_manager: 'Store Manager', kasir: 'Kasir' };
+    // Tab yang boleh dibuka tiap peran
+    const ROLE_TABS = {
+      owner: ['finance', 'inventory', 'staff', 'accounting', 'po', 'promo'],
+      area_manager: ['finance', 'inventory', 'staff', 'po'],
+      store_manager: ['finance', 'inventory', 'staff']
+    };
+
+    // Terapkan tampilan sesuai peran: tab, switcher outlet, kelola outlet.
+    function applyRoleUI() {
+      const role = getPortalRole();
+      const tabs = ROLE_TABS[role] || ROLE_TABS.owner;
+      ['finance', 'inventory', 'staff', 'accounting', 'po', 'promo'].forEach(t => {
+        const btn = document.getElementById('view-tab-' + t);
+        if (btn) btn.classList.toggle('hidden', tabs.indexOf(t) < 0);
+      });
+      // Kalau tab yang sedang aktif tidak boleh dibuka peran ini -> ke finance
+      const allowed = ROLE_TABS[role] || ROLE_TABS.owner;
+      if (allowed.indexOf(currentOwnerView) < 0) switchOwnerView('finance');
+      renderUserBadge();
+      // Kelola Outlet hanya untuk owner
+      const kelola = document.getElementById('kelola-outlet-section');
+      if (kelola) kelola.classList.toggle('hidden', !isOwner());
+      // Store manager: kunci filter ke outletnya
+      if (role === 'store_manager' && portalSession.outletIds && portalSession.outletIds[0] && portalSession.outletIds[0] !== '*') {
+        setOwnerOutletId(portalSession.outletIds[0]);
+      }
+      // Area manager: "semua" = semua outlet yang ditugaskan
+      if (role === 'area_manager' && getOwnerOutletId() === 'ALL') {
+        const ids = (portalSession.outletIds || []).filter(id => id !== '*');
+        if (ids.length) setOwnerOutletId(ids.join(','));
+      }
+    }
+
+    function renderUserBadge() {
+      const el = document.getElementById('portal-user-badge');
+      if (!el) return;
+      if (!portalSession) { el.classList.add('hidden'); return; }
+      el.classList.remove('hidden');
+      el.innerHTML = `<span class="font-bold text-stone-700">${escapeOwnerHtml(portalSession.name)}</span>
+        <span class="px-2 py-0.5 rounded-full text-[10px] font-black bg-amber-100 text-amber-900 border border-amber-300 uppercase tracking-wide">${ROLE_LABEL[portalSession.role] || portalSession.role}</span>`;
     }
 
     function setRange(range) {
@@ -2885,6 +2950,9 @@
     let allStockLogs = [];
 
     function switchOwnerView(view) {
+      // Jaga peran: tab yang disembunyikan tidak bisa dibuka paksa
+      const allowed = ROLE_TABS[getPortalRole()] || ROLE_TABS.owner;
+      if (allowed.indexOf(view) < 0) view = 'finance';
       currentOwnerView = view;
       const tabFin = document.getElementById('view-tab-finance');
       const tabInv = document.getElementById('view-tab-inventory');
@@ -2955,30 +3023,30 @@
       return new Date(iso).toLocaleString('id-ID', { day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit' });
     }
 
-    // --- Ganti PIN Owner ---
-    async function changeOwnerPin() {
-      const oldPin = document.getElementById('pin-old').value.trim();
-      const newPin = document.getElementById('pin-new').value.trim();
-      const newPin2 = document.getElementById('pin-new2').value.trim();
-      const status = document.getElementById('pin-change-status');
+    // --- Ganti Password (akun sendiri) ---
+    async function changePortalPassword() {
+      const oldPw = document.getElementById('pw-old').value;
+      const newPw = document.getElementById('pw-new').value;
+      const newPw2 = document.getElementById('pw-new2').value;
+      const status = document.getElementById('pw-change-status');
       const err = (msg) => { status.textContent = msg; status.className = 'text-[11px] text-red-600 font-semibold'; };
       status.textContent = ''; status.className = 'text-[11px] text-stone-400';
-      if (!oldPin || !newPin || !newPin2) return err('Semua kolom wajib diisi.');
-      if (newPin !== newPin2) return err('PIN baru tidak sama dengan ulangannya.');
-      if (!/^[0-9]{4,6}$/.test(newPin)) return err('PIN baru harus 4–6 digit angka.');
+      if (!oldPw || !newPw || !newPw2) return err('Semua kolom wajib diisi.');
+      if (newPw !== newPw2) return err('Password baru tidak sama dengan ulangannya.');
+      if (newPw.length < 6) return err('Password baru minimal 6 karakter.');
       try {
-        const res = await fetch('/api/owner/change-pin', {
+        const res = await fetch('/api/portal/change-password', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ old_pin: oldPin, new_pin: newPin })
+          body: JSON.stringify({ current_password: oldPw, new_password: newPw })
         });
         const data = await res.json();
         if (data.success) {
-          status.textContent = '✓ ' + (data.message || 'PIN berhasil diubah.');
+          status.textContent = '✓ Password berhasil diubah.';
           status.className = 'text-[11px] text-emerald-600 font-semibold';
-          ['pin-old', 'pin-new', 'pin-new2'].forEach(id => document.getElementById(id).value = '');
+          ['pw-old', 'pw-new', 'pw-new2'].forEach(id => document.getElementById(id).value = '');
         } else {
-          err(data.message || 'Gagal mengubah PIN.');
+          err(data.message || 'Gagal mengubah password.');
         }
       } catch (e) {
         err('Gagal menghubungi server.');
@@ -3149,18 +3217,35 @@
       const wrap = document.getElementById('outlet-switcher-wrap');
       const sel = document.getElementById('outlet-switcher');
       if (!wrap || !sel) return;
-      const active = ownerOutlets.filter(o => o.active);
+      const role = getPortalRole();
+      let active = ownerOutlets.filter(o => o.active);
+      // Batasi pilihan sesuai peran
+      if (role === 'store_manager') {
+        // 1 outlet -> switcher disembunyikan, filter dikunci (di applyRoleUI)
+        wrap.classList.add('hidden'); wrap.classList.remove('flex'); return;
+      }
+      if (role === 'area_manager' && portalSession && portalSession.outletIds) {
+        const ids = portalSession.outletIds.filter(id => id !== '*');
+        active = active.filter(o => ids.indexOf(o.id) >= 0);
+      }
       if (active.length <= 1) { wrap.classList.add('hidden'); wrap.classList.remove('flex'); return; }
       wrap.classList.remove('hidden'); wrap.classList.add('flex');
       const cur = getOwnerOutletId();
-      sel.innerHTML = `<option value="ALL">Semua Outlet</option>` + active.map(o =>
+      const allLabel = role === 'area_manager' ? 'Semua outlet saya' : 'Semua Outlet';
+      const allValue = role === 'area_manager'
+        ? (portalSession.outletIds || []).filter(id => id !== '*').join(',')
+        : 'ALL';
+      sel.innerHTML = `<option value="${allValue}">${allLabel}</option>` + active.map(o =>
         `<option value="${o.id}" ${cur === o.id ? 'selected' : ''}>${escapeOwnerHtml(o.name)}</option>`
       ).join('');
-      if (cur !== 'ALL' && !active.find(o => o.id === cur)) sel.value = 'ALL';
+      if (cur !== allValue && !active.find(o => o.id === cur)) sel.value = allValue;
     }
     function onOutletSwitch() {
       const v = document.getElementById('outlet-switcher').value;
-      setOwnerOutletId(v === 'ALL' ? null : v);
+      // Nilai "ALL" (owner) atau daftar koma (area manager) -> set apa adanya;
+      // setOwnerOutletId hanya menghapus key untuk 'ALL'/kosong.
+      if (v === 'ALL') setOwnerOutletId(null);
+      else setOwnerOutletId(v);
       if (typeof loadAnalytics === 'function') loadAnalytics();
       if (typeof loadIngredients === 'function') loadIngredients();
       if (typeof loadStaffData === 'function') loadStaffData();
