@@ -3,7 +3,7 @@
 <head>
   <script src="brand-config.js"></script>
   <script>window.__mykitchenOutletKey = 'mykitchen_owner_outlet_filter';</script>
-  <script src="api-supabase.js?v=20261003r"></script>
+  <script src="api-supabase.js?v=20261003s"></script>
   <!-- api-shim: ganti /api/* dgn localStorage (perbaikan persistensi utk hosting statis) -->
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
@@ -1567,8 +1567,9 @@
           <input id="void-reason" type="text" maxlength="200" placeholder="cth: salah input menu" class="w-full px-3 py-2.5 rounded-2xl border border-stone-300 text-sm focus:outline-none focus:border-rose-400" />
         </div>
         <div>
-          <label class="text-xs font-bold text-stone-600 mb-1.5 block">PIN Owner *</label>
-          <input id="void-pin" type="password" maxlength="6" inputmode="numeric" placeholder="PIN owner" class="w-full px-3 py-2.5 rounded-2xl border border-stone-300 text-sm font-mono focus:outline-none focus:border-rose-400" />
+          <label class="text-xs font-bold text-stone-600 mb-1.5 block">Disetujui oleh</label>
+          <div id="void-approver" class="w-full px-3 py-2.5 rounded-2xl bg-stone-100 border border-stone-200 text-sm font-bold text-stone-700"></div>
+          <p class="text-[10px] text-stone-400 mt-1">Persetujuan otomatis memakai akun yang sedang login (Owner / manajer outlet terkait).</p>
         </div>
         <div id="void-confirm-warn" class="hidden bg-amber-50 border border-amber-300 rounded-2xl p-3 text-amber-800 text-[11px] leading-relaxed"></div>
         <div id="void-error" class="hidden bg-rose-50 border border-rose-300 rounded-2xl p-3 text-rose-700 text-[11px] leading-relaxed font-bold"></div>
@@ -1607,8 +1608,9 @@
           <input id="refund-reason" type="text" maxlength="200" placeholder="cth: salah pencet 2 porsi, komplain pelanggan" class="w-full px-3 py-2.5 rounded-2xl border border-stone-300 text-sm focus:outline-none focus:border-amber-400" />
         </div>
         <div>
-          <label class="text-xs font-bold text-stone-600 mb-1.5 block">PIN Owner *</label>
-          <input id="refund-pin" type="password" maxlength="6" inputmode="numeric" placeholder="PIN owner" class="w-full px-3 py-2.5 rounded-2xl border border-stone-300 text-sm font-mono focus:outline-none focus:border-amber-400" />
+          <label class="text-xs font-bold text-stone-600 mb-1.5 block">Disetujui oleh</label>
+          <div id="refund-approver" class="w-full px-3 py-2.5 rounded-2xl bg-stone-100 border border-stone-200 text-sm font-bold text-stone-700"></div>
+          <p class="text-[10px] text-stone-400 mt-1">Persetujuan otomatis memakai akun yang sedang login (Owner / manajer outlet terkait).</p>
         </div>
         <div id="refund-confirm-warn" class="hidden bg-amber-50 border border-amber-300 rounded-2xl p-3 text-amber-800 text-[11px] leading-relaxed"></div>
         <div id="refund-error" class="hidden bg-rose-50 border border-rose-300 rounded-2xl p-3 text-rose-700 text-[11px] leading-relaxed font-bold"></div>
@@ -2706,6 +2708,12 @@
     // --- Void order: modal konfirmasi (alasan + PIN owner) ---
     // Konfirmasi 2 langkah di dalam modal (tanpa native await askConfirm(),
     // supaya bisa diuji otomatis dan UX lebih konsisten).
+    // Label penyetuju void/refund = akun yg sedang login (fase 2d)
+    function approverLabel() {
+      if (!portalSession) return '-';
+      const lbl = ROLE_LABEL[getPortalRole()] || getPortalRole();
+      return (portalSession.name || '-') + ' (' + lbl + ')';
+    }
     let voidTarget = null;
     let voidArmed = false;
     let voidArmTimer = null;
@@ -2715,7 +2723,7 @@
       document.getElementById('void-order-id').textContent = orderId;
       document.getElementById('void-order-total').textContent = formatRupiah(total);
       document.getElementById('void-reason').value = '';
-      document.getElementById('void-pin').value = '';
+      document.getElementById('void-approver').textContent = approverLabel();
       document.getElementById('void-modal').classList.remove('hidden');
       lucide.createIcons();
     }
@@ -2741,9 +2749,7 @@
     async function submitVoidOrder() {
       if (!voidTarget) return;
       const reason = document.getElementById('void-reason').value.trim();
-      const pin = document.getElementById('void-pin').value.trim();
       if (!reason) { showVoidError('Alasan void wajib diisi.'); return; }
-      if (!pin) { showVoidError('PIN owner wajib diisi.'); return; }
       if (!voidArmed) {
         voidArmed = true;
         const warn = document.getElementById('void-confirm-warn');
@@ -2760,7 +2766,7 @@
       try {
         const res = await fetch('/api/orders/void', {
           method: 'POST', headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ order_id: voidTarget.id, owner_pin: pin, reason, voided_by: 'Owner' })
+          body: JSON.stringify({ order_id: voidTarget.id, reason })
         });
         const data = await res.json();
         if (!res.ok || data.success !== true) throw new Error(data.message || 'Gagal void');
@@ -2787,7 +2793,7 @@
       amt.value = total;
       amt.max = total;
       document.getElementById('refund-reason').value = '';
-      document.getElementById('refund-pin').value = '';
+      document.getElementById('refund-approver').textContent = approverLabel();
       document.getElementById('refund-modal').classList.remove('hidden');
       lucide.createIcons();
     }
@@ -2814,11 +2820,9 @@
       if (!refundTarget) return;
       const amount = Math.round(Number(document.getElementById('refund-amount').value) || 0);
       const reason = document.getElementById('refund-reason').value.trim();
-      const pin = document.getElementById('refund-pin').value.trim();
       if (!(amount > 0)) { showRefundError('Nominal refund harus lebih dari Rp 0.'); return; }
       if (amount > refundTarget.total) { showRefundError('Nominal refund tidak boleh melebihi total order (' + formatRupiah(refundTarget.total) + ').'); return; }
       if (!reason) { showRefundError('Alasan refund wajib diisi.'); return; }
-      if (!pin) { showRefundError('PIN owner wajib diisi.'); return; }
       if (!refundArmed) {
         refundArmed = true;
         const warn = document.getElementById('refund-confirm-warn');
@@ -2835,7 +2839,7 @@
       try {
         const res = await fetch('/api/orders/refund', {
           method: 'POST', headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ order_id: refundTarget.id, owner_pin: pin, amount, reason, refunded_by: 'Owner' })
+          body: JSON.stringify({ order_id: refundTarget.id, amount, reason })
         });
         const data = await res.json();
         if (!res.ok || data.success !== true) throw new Error(data.message || 'Gagal refund');
