@@ -1570,9 +1570,24 @@
             body.items.forEach(function (oi) {
               (recipeMap[oi.id] || []).forEach(function (rec) { needIds[rec.ingredientId] = true; });
             });
+            // Resep rekursif: cari resep bahan olahan (prep item)
+            var prepIds = Object.keys(needIds);
+            var prepP = prepIds.length
+              ? rawSel('ingredient_recipes', 'select=ingredient_id,items&ingredient_id=in.(' + prepIds.map(encodeURIComponent).join(',') + ')').catch(function () { return []; })
+              : Promise.resolve([]);
             var ingIds = Object.keys(needIds);
             if (!ingIds.length) return null;
-            return sel('ingredients', 'select=*&id=in.(' + ingIds.map(encodeURIComponent).join(',') + ')')
+            return prepP.then(function (prepRows) {
+              var prepMap = {};
+              (prepRows || []).forEach(function (r) {
+                if (r.ingredient_id && r.items && r.items.length) prepMap[r.ingredient_id] = r.items;
+              });
+              // Kumpulkan juga ID bahan mentah dari resep prep
+              Object.keys(prepMap).forEach(function (pid) {
+                prepMap[pid].forEach(function (sr) { if (sr.ingredientId) needIds[sr.ingredientId] = true; });
+              });
+              var allIngIds = Object.keys(needIds);
+              return sel('ingredients', 'select=*&id=in.(' + allIngIds.map(encodeURIComponent).join(',') + ')')
               .then(function (ingRows) {
                 var ingMap = {};
                 ingRows.forEach(function (g) { ingMap[g.id] = g; });
@@ -1580,22 +1595,38 @@
                 var logs = [];
                 var ingFinal = {}; // id bahan -> stok akhir (satu PATCH per bahan, anti race)
                 var ordChannel = orderTypeToChannel(body.orderType);
+                function deductOne(ingId, need, refNote) {
+                  var ing = ingMap[ingId];
+                  if (!ing || need <= 0) return;
+                  var nb = Math.max(0, Math.round((Number(ing.current_stock) - need) * 1000) / 1000);
+                  ing.current_stock = nb;
+                  ingFinal[ing.id] = nb;
+                  logs.push({
+                    id: uid('log'), ingredient_id: ing.id, ingredient_name: ing.name,
+                    type: 'OUT_SALE', change_qty: -need, balance_qty: nb,
+                    unit: ing.unit, reference: 'POS ' + orderId, note: refNote
+                  });
+                }
                 body.items.forEach(function (orderItem) {
                   var qtyBought = Number(orderItem.qty) || 1;
+                  var refNote = (orderItem.name || orderItem.id) + ' x' + qtyBought;
                   (recipeMap[orderItem.id] || []).forEach(function (rec) {
                     var ing = ingMap[rec.ingredientId];
                     if (!ing) return;
                     if (!recipeAppliesToChannel(rec, ordChannel)) return;
-                    var deduction = (Number(rec.amount) || 0) * qtyBought;
-                    var nb = Math.max(0, Math.round((Number(ing.current_stock) - deduction) * 1000) / 1000);
-                    ing.current_stock = nb; // untuk item berikutnya yg pakai bahan sama
-                    ingFinal[ing.id] = nb;
-                    logs.push({
-                      id: uid('log'), ingredient_id: ing.id, ingredient_name: ing.name,
-                      type: 'OUT_SALE', change_qty: -deduction, balance_qty: nb,
-                      unit: ing.unit, reference: 'POS ' + orderId,
-                      note: (orderItem.name || orderItem.id) + ' x' + qtyBought
-                    });
+                    var deduction = calcDeduction(qtyBought, rec.amount, rec.loss_pct, rec.unit, ing.unit);
+                    var subRecipe = prepMap[rec.ingredientId];
+                    if (subRecipe && (Number(ing.current_stock) || 0) < deduction) {
+                      // Stok olahan kurang -> potong bahan mentahnya langsung
+                      subRecipe.forEach(function (sr) {
+                        var subIng = ingMap[sr.ingredientId];
+                        var subAmt = convertQty(sr.amount, sr.unit, subIng ? subIng.unit : null);
+                        var subNeed = Math.round(deduction * subAmt * 1000) / 1000;
+                        deductOne(sr.ingredientId, subNeed, refNote + ' (via ' + ing.name + ')');
+                      });
+                    } else {
+                      deductOne(rec.ingredientId, deduction, refNote);
+                    }
                   });
                 });
                 Object.keys(ingFinal).forEach(function (iid) {
@@ -1604,7 +1635,8 @@
                 return Promise.all(ops).then(function () {
                   return logs.length ? ins('stock_logs', logs) : null;
                 });
-              });
+              }); // end ingRows.then
+              }); // end prepP.then
           })
           .then(function () {
             return sel('orders', 'select=*&id=eq.' + encodeURIComponent(orderId));
@@ -2123,7 +2155,7 @@
                 var ing = ingMap[rec.ingredientId];
                 if (!ing) return;
                 if (!recipeAppliesToChannel(rec, orderChannel)) return;
-                var deduction = (Number(rec.amount) || 0) * qtyBought;
+                var deduction = calcDeduction(qtyBought, rec.amount, rec.loss_pct, rec.unit, ing.unit);
                 var nb = Math.max(0, Math.round((Number(ing.current_stock) - deduction) * 1000) / 1000);
                 ing.current_stock = nb;
                 ingFinal[ing.id] = nb;
@@ -2890,6 +2922,40 @@
     }).catch(serverError);
   };
 
+  // Helper: konversi satuan (UoM). Grup: berat (g), volume (ml), hitung (pcs).
+  var UOM_MAP = {
+    'kg': { base: 'g', factor: 1000 }, 'g': { base: 'g', factor: 1 }, 'gr': { base: 'g', factor: 1 },
+    'mg': { base: 'g', factor: 0.001 }, 'ons': { base: 'g', factor: 100 },
+    'l': { base: 'ml', factor: 1000 }, 'lt': { base: 'ml', factor: 1000 }, 'ml': { base: 'ml', factor: 1 },
+    'cc': { base: 'ml', factor: 1 }, 'sdm': { base: 'ml', factor: 15 }, 'sdt': { base: 'ml', factor: 5 },
+    'pcs': { base: 'pcs', factor: 1 }, 'pc': { base: 'pcs', factor: 1 },
+    'butir': { base: 'pcs', factor: 1 }, 'btr': { base: 'pcs', factor: 1 },
+    'biji': { base: 'pcs', factor: 1 }, 'buah': { base: 'pcs', factor: 1 },
+    'pack': { base: 'pcs', factor: 1 }, 'bks': { base: 'pcs', factor: 1 }, 'bungkus': { base: 'pcs', factor: 1 },
+    'sachet': { base: 'pcs', factor: 1 }, 'sct': { base: 'pcs', factor: 1 },
+    'lembar': { base: 'pcs', factor: 1 }, 'lbr': { base: 'pcs', factor: 1 },
+    'siung': { base: 'pcs', factor: 1 }, 'batang': { base: 'pcs', factor: 1 },
+    'ikat': { base: 'pcs', factor: 1 }, 'potong': { base: 'pcs', factor: 1 }
+  };
+  function convertQty(amount, fromUnit, toUnit) {
+    var a = Number(amount) || 0;
+    var f = UOM_MAP[String(fromUnit || '').toLowerCase().trim()];
+    var t = UOM_MAP[String(toUnit || '').toLowerCase().trim()];
+    if (!f || !t || f.base !== t.base) return a; // beda grup / tak dikenal: pakai apa adanya
+    var inBase = a * f.factor;
+    return Math.round((inBase / t.factor) * 1000) / 1000;
+  }
+
+  // Helper: potongan stok dgn loss% susut masak + konversi satuan.
+  // Q_potong = Q_terjual x Q_resep(dikonversi ke satuan bahan) x (1 + lossPct/100)
+  function calcDeduction(qtyBought, recAmount, lossPct, recUnit, ingUnit) {
+    var amt = convertQty(recAmount, recUnit, ingUnit);
+    var q = (Number(qtyBought) || 0) * amt;
+    var lp = Number(lossPct) || 0;
+    if (lp > 0) q = q * (1 + lp / 100);
+    return Math.round(q * 1000) / 1000;
+  }
+
   // Helper: apakah bahan resep dipotong utk channel ini?
   // rec.channel kosong = semua channel; terisi = hanya channel tsb.
   function recipeAppliesToChannel(rec, orderChannel) {
@@ -3234,6 +3300,165 @@
           .then(function () { return ok({ success: true, log: entry }); });
         }); // end findOrCreate().then
       }); // end needApprP.then
+    }).catch(serverError);
+  };
+
+  // 15g2. GET /api/owner/ingredient-recipes — resep bahan olahan (?ingredient_id=)
+  routes['GET /api/owner/ingredient-recipes'] = function (body, query) {
+    var chk = getPortalSession();
+    if (!chk) return Promise.resolve(unauthorized({ success: false, message: 'Sesi berakhir.' }));
+    var q = 'select=ingredient_id,items';
+    if (query && query.ingredient_id) q += '&ingredient_id=eq.' + encodeURIComponent(query.ingredient_id);
+    return rawSel('ingredient_recipes', q).then(function (rows) {
+      return ok({ success: true, recipes: rows || [] });
+    }).catch(function () { return ok({ success: true, recipes: [] }); });
+  };
+
+  // 15g3. POST /api/owner/ingredient-recipes/update — { ingredient_id, items: [{ingredientId, amount, unit, loss_pct?}] }
+  routes['POST /api/owner/ingredient-recipes/update'] = function (body) {
+    var chk = requirePortal(ROLE_ALL_MGR);
+    if (!chk.ok) return Promise.resolve(chk.res);
+    if (!body.ingredient_id) return Promise.resolve(bad({ success: false, message: 'Bahan wajib.' }));
+    var items = (body.items || []).filter(function (x) { return x.ingredientId && (Number(x.amount) || 0) > 0; })
+      .map(function (x) {
+        return {
+          ingredientId: x.ingredientId, amount: Number(x.amount) || 0,
+          unit: String(x.unit || '').slice(0, 20), loss_pct: Number(x.loss_pct) || 0
+        };
+      });
+    // Cegah self-reference
+    if (items.some(function (x) { return x.ingredientId === body.ingredient_id; })) {
+      return Promise.resolve(bad({ success: false, message: 'Bahan tidak boleh pakai dirinya sendiri.' }));
+    }
+    var row = { ingredient_id: body.ingredient_id, items: items, updated_at: new Date().toISOString() };
+    // Upsert
+    return rawSel('ingredient_recipes', 'select=ingredient_id&ingredient_id=eq.' + encodeURIComponent(body.ingredient_id))
+      .then(function (ex) {
+        if (ex && ex.length) {
+          return rawUpd('ingredient_recipes', 'ingredient_id=eq.' + encodeURIComponent(body.ingredient_id), row);
+        }
+        return rawIns('ingredient_recipes', [row]);
+      })
+      .then(function () { return ok({ success: true, message: 'Resep bahan olahan tersimpan.' }); })
+      .catch(serverError);
+  };
+
+  // 15h. POST /api/owner/opname — stock opname fisik vs sistem.
+  //     { outlet_id?, pic_name?, items: [{ingredient_id, physical_stock, notes?}] }
+  //     Selisih (variance) otomatis menyesuaikan stok + tercatat nilainya.
+  var _hasOpnameTbl = null;
+  function opnameTableReady() {
+    if (_hasOpnameTbl !== null) return Promise.resolve(_hasOpnameTbl);
+    return rawSel('stock_opnames', 'select=id&limit=1').then(function () {
+      _hasOpnameTbl = true; return true;
+    }).catch(function () { _hasOpnameTbl = false; return false; });
+  }
+  routes['POST /api/owner/opname'] = function (body) {
+    var chk = requirePortal(ROLE_ALL_MGR);
+    if (!chk.ok) return Promise.resolve(chk.res);
+    return opnameTableReady().then(function (ready) {
+      if (!ready) return bad({ success: false, message: 'Tabel stock_opnames belum ada. Jalankan SQL dulu.' });
+      var outletId = body.outlet_id || null;
+      if (chk.session.role === 'store_manager') outletId = (chk.session.outletIds || [])[0] || null;
+      if (!outletId) {
+        var ids0 = (chk.session.outletIds || []).filter(function (x) { return x !== '*'; });
+        outletId = ids0[0] || null;
+      }
+      if (!outletId || !sessionCanOutlet(chk.session, outletId)) {
+        return Promise.resolve(forbidden({ success: false, message: 'Outlet di luar wewenang.' }));
+      }
+      var items = body.items || [];
+      if (!items.length) return bad({ success: false, message: 'Tidak ada item opname.' });
+      var picName = String(body.pic_name || chk.session.name || '').slice(0, 60);
+      var ingIds = items.map(function (x) { return x.ingredient_id; }).filter(Boolean);
+      return sel('ingredients', 'select=*&id=in.(' + ingIds.map(encodeURIComponent).join(',') + ')&outlet_id=eq.' + encodeURIComponent(outletId), { allOutlets: true })
+        .then(function (ingRows) {
+          var ingMap = {};
+          (ingRows || []).forEach(function (g) { ingMap[g.id] = g; });
+          var opId = uid('opn');
+          var code = 'OPN-' + new Date().toISOString().slice(0, 10).replace(/-/g, '') + '-' + opId.slice(-4).toUpperCase();
+          var opItems = [];
+          var logs = [];
+          var ops = [];
+          var totalVarCost = 0;
+          items.forEach(function (it) {
+            var ing = ingMap[it.ingredient_id];
+            if (!ing) return;
+            var sysStock = Number(ing.current_stock) || 0;
+            var physStock = Number(it.physical_stock);
+            if (isNaN(physStock) || physStock < 0) return;
+            var variance = Math.round((physStock - sysStock) * 1000) / 1000;
+            var varCost = Math.round(variance * (Number(ing.cost_per_unit) || 0));
+            totalVarCost += varCost;
+            opItems.push({
+              id: uid('opi'), opname_id: opId,
+              ingredient_id: ing.id, ingredient_name: ing.name,
+              system_stock: sysStock, physical_stock: physStock,
+              variance: variance, variance_cost: varCost,
+              unit: ing.unit || '', notes: String(it.notes || '').slice(0, 200)
+            });
+            // Sesuaikan stok ke fisik
+            ops.push(upd('ingredients', 'id=eq.' + encodeURIComponent(ing.id), { current_stock: physStock }, { allOutlets: true }));
+            logs.push({
+              id: uid('log'), ingredient_id: ing.id, ingredient_name: ing.name,
+              type: 'OPNAME_ADJUSTMENT', change_qty: variance, balance_qty: physStock,
+              unit: ing.unit || '', reference: code,
+              note: 'Opname: sistem ' + sysStock + ' -> fisik ' + physStock
+            });
+          });
+          if (!opItems.length) return bad({ success: false, message: 'Tidak ada item valid.' });
+          return Promise.all(ops)
+            .then(function () {
+              return rawIns('stock_opnames', [{
+                id: opId, outlet_id: outletId, opname_code: code,
+                pic_name: picName, status: 'completed'
+              }]);
+            })
+            .then(function () { return rawIns('stock_opname_items', opItems); })
+            .then(function () { return ins('stock_logs', logs).catch(function () {}); })
+            .then(function () {
+              return ok({ success: true, code: code, items: opItems.length, totalVarianceCost: totalVarCost });
+            });
+        });
+    }).catch(serverError);
+  };
+
+  // 15i. GET /api/owner/opnames — riwayat stock opname (?outlet_id=)
+  routes['GET /api/owner/opnames'] = function (body, query) {
+    var chk = getPortalSession();
+    if (!chk) return Promise.resolve(unauthorized({ success: false, message: 'Sesi berakhir.' }));
+    return opnameTableReady().then(function (ready) {
+      if (!ready) return ok({ success: true, opnames: [] });
+      var q = 'select=*&order=created_at.desc&limit=50';
+      if (query && query.outlet_id) q += '&outlet_id=eq.' + encodeURIComponent(query.outlet_id);
+      return rawSel('stock_opnames', q).then(function (rows) {
+        var list = (rows || []).map(function (r) {
+          return {
+            id: r.id, outletId: r.outlet_id, code: r.opname_code,
+            picName: r.pic_name || '', status: r.status, createdAt: r.created_at
+          };
+        });
+        if (chk.role !== 'owner' && chk.outletIds) {
+          var ids = chk.outletIds.filter(function (x) { return x !== '*'; });
+          list = list.filter(function (x) { return ids.indexOf(x.outletId) >= 0; });
+        }
+        // Ambil detail items utk tiap opname
+        var detailP = list.length
+          ? rawSel('stock_opname_items', 'select=*&opname_id=in.(' + list.map(function (x) { return encodeURIComponent(x.id); }).join(',') + ')&limit=500')
+          : Promise.resolve([]);
+        return detailP.then(function (drows) {
+          var dmap = {};
+          (drows || []).forEach(function (d) {
+            (dmap[d.opname_id] = dmap[d.opname_id] || []).push({
+              ingredientName: d.ingredient_name, systemStock: Number(d.system_stock) || 0,
+              physicalStock: Number(d.physical_stock) || 0, variance: Number(d.variance) || 0,
+              varianceCost: Number(d.variance_cost) || 0, unit: d.unit || '', notes: d.notes || ''
+            });
+          });
+          list.forEach(function (x) { x.items = dmap[x.id] || []; });
+          return ok({ success: true, opnames: list });
+        });
+      });
     }).catch(serverError);
   };
 
@@ -5085,7 +5310,7 @@
                 var ing = ingMap[rec.ingredientId];
                 if (!ing) return;
                 if (!recipeAppliesToChannel(rec, voidChannel)) return;
-                var back = (Number(rec.amount) || 0) * qtyVoid;
+                var back = calcDeduction(qtyVoid, rec.amount, rec.loss_pct, rec.unit, ing.unit);
                 var nb = Math.round(((Number(ing.current_stock) || 0) + back) * 1000) / 1000;
                 ing.current_stock = nb;
                 ingFinal[ing.id] = nb;
