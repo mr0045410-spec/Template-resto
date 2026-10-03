@@ -330,12 +330,36 @@
     };
   }
   function rowToEmployee(r) {
-    // pin_hash SENGAJA tidak disertakan — tidak boleh bocor ke frontend
+    // pin_hash & password_hash SENGAJA tidak disertakan — tidak boleh bocor ke frontend
     return {
       id: r.id, name: r.name, role: r.role || 'kasir',
-      active: r.active !== false, createdAt: r.created_at
+      active: r.active !== false, createdAt: r.created_at,
+      username: r.username || '', outletId: r.outlet_id || null
     };
   }
+
+  /* ---- RBAC pegawai (fase 2c) ---- */
+  var MANAGER_ROLES = ['owner', 'area_manager', 'store_manager'];
+  // Outlet-outlet yang "dipegang" satu pegawai (untuk cek scope).
+  function employeeScopeIds(emp) {
+    if (!emp) return Promise.resolve([]);
+    if (emp.role === 'area_manager') {
+      return rawSel('manager_outlets', 'select=outlet_id&employee_id=eq.' + encodeURIComponent(emp.id))
+        .then(function (rows) { return (rows || []).map(function (r) { return r.outlet_id; }); })
+        .catch(function () { return []; });
+    }
+    return Promise.resolve(emp.outlet_id ? [emp.outlet_id] : []);
+  }
+  // Apakah sesi boleh mengelola target (berdasarkan irisan outlet)?
+  // Owner boleh semua. Target tanpa outlet (area_manager) dicek via manager_outlets.
+  function canManageEmployee(me, targetScopeIds) {
+    if (me.role === 'owner') return Promise.resolve(true);
+    var mine = me.outletIds || [];
+    if (!targetScopeIds.length) return Promise.resolve(false);
+    return Promise.resolve(targetScopeIds.some(function (id) { return mine.indexOf(id) >= 0; }));
+  }
+  function validUsername(u) { return /^[a-zA-Z0-9._-]{3,30}$/.test(u); }
+
   function rowToShift(r) {
     return {
       id: r.id, employeeId: r.employee_id, employeeName: r.employee_name || '',
@@ -387,6 +411,173 @@
   /* Route handlers                                                       */
   /* ================================================================== */
   var routes = {};
+
+  // 21. POST /api/owner/employees/upsert — tambah / edit pegawai (RBAC).
+  //     body: { id?, name, pin?, username?, password?, role?, outlet_id? }
+  //     - owner: semua peran (kecuali 'owner'), semua outlet.
+  //     - area_manager: kasir & store_manager di outletnya. Tidak bisa angkat area_manager.
+  //     - store_manager: hanya kasir di outletnya sendiri.
+  //     username+password wajib untuk peran manajer (login portal).
+  routes['POST /api/owner/employees/upsert'] = function (body) {
+    var chk = requirePortal(MANAGER_ROLES);
+    if (!chk.ok) return Promise.resolve(chk.res);
+    var me = chk.session;
+    var name = String(body.name || '').trim();
+    if (!name) return Promise.resolve(bad({ success: false, message: 'Nama pegawai wajib diisi' }));
+    var role = String(body.role || 'kasir');
+    if (['kasir', 'store_manager', 'area_manager'].indexOf(role) < 0) {
+      return Promise.resolve(bad({ success: false, message: 'Role tidak valid.' }));
+    }
+    if (me.role === 'store_manager' && role !== 'kasir') {
+      return Promise.resolve(forbidden({ success: false, message: 'Store Manager hanya boleh menambah kasir.' }));
+    }
+    if (me.role === 'area_manager' && role === 'area_manager') {
+      return Promise.resolve(forbidden({ success: false, message: 'Area Manager tidak bisa mengangkat Area Manager.' }));
+    }
+    var username = String(body.username || '').trim();
+    var password = body.password === undefined || body.password === null ? '' : String(body.password);
+    var pin = body.pin === undefined || body.pin === null ? '' : String(body.pin).trim();
+    if (role !== 'kasir' && !body.id && !username) {
+      return Promise.resolve(bad({ success: false, message: 'Username wajib diisi untuk peran manajer.' }));
+    }
+    if (username && !validUsername(username)) {
+      return Promise.resolve(bad({ success: false, message: 'Username 3-30 karakter (huruf/angka/._-).' }));
+    }
+    if (password && password.length < 6) {
+      return Promise.resolve(bad({ success: false, message: 'Password minimal 6 karakter.' }));
+    }
+    if (!body.id && username && !password) {
+      return Promise.resolve(bad({ success: false, message: 'Password wajib diisi untuk akun baru.' }));
+    }
+    if (pin && pin.length < 4) {
+      return Promise.resolve(bad({ success: false, message: 'PIN minimal 4 digit.' }));
+    }
+    // Tentukan outlet: store_manager selalu dikunci ke outletnya sendiri.
+    var outletId = body.outlet_id || null;
+    if (me.role === 'store_manager') outletId = (me.outletIds || [])[0] || null;
+    if (role === 'area_manager') outletId = null; // outlet via manager_outlets
+    if (role === 'store_manager' && !outletId) {
+      return Promise.resolve(bad({ success: false, message: 'Pilih outlet untuk Store Manager.' }));
+    }
+    if (outletId && !sessionCanOutlet(me, outletId)) {
+      return Promise.resolve(forbidden({ success: false, message: 'Outlet di luar wewenangmu.' }));
+    }
+
+    function usernameTaken(uname, exceptId) {
+      if (!uname) return Promise.resolve(false);
+      return sel('employees', 'select=id&username=eq.' + encodeURIComponent(uname) + '&limit=1', { allOutlets: true })
+        .then(function (rows) {
+          return rows.length > 0 && rows[0].id !== exceptId;
+        }).catch(function () { return false; });
+    }
+    function hashPwIfNeeded(pw) {
+      if (!pw) return Promise.resolve(null);
+      return makePasswordHash(pw);
+    }
+
+    if (body.id) {
+      // ---- EDIT ----
+      return sel('employees', 'select=id,name,role,outlet_id,username&id=eq.' + encodeURIComponent(body.id) + '&limit=1', { allOutlets: true })
+        .then(function (er) {
+          if (!er.length) return notFound({ success: false, message: 'Pegawai tidak ditemukan' });
+          var old = er[0];
+          return employeeScopeIds(old).then(function (scopeIds) {
+            return canManageEmployee(me, scopeIds).then(function (allowed) {
+              if (!allowed) return forbidden({ success: false, message: 'Pegawai di luar wewenangmu.' });
+              // Role target setelah edit juga harus dalam hak si pengelola
+              if (me.role === 'store_manager' && role !== 'kasir') {
+                return forbidden({ success: false, message: 'Store Manager hanya boleh mengelola kasir.' });
+              }
+              return usernameTaken(username, old.id).then(function (taken) {
+                if (taken) return bad({ success: false, message: 'Username sudah dipakai.' });
+                if (role !== 'kasir' && !username && !old.username) {
+                  return bad({ success: false, message: 'Username wajib diisi untuk peran manajer.' });
+                }
+                return hashPwIfNeeded(password).then(function (pwHash) {
+                  var patch = { name: name, role: role, outlet_id: outletId, username: username || null };
+                  if (pin !== '') patch.pin_hash = hashPin(pin);
+                  if (pwHash) patch.password_hash = pwHash;
+                  return upd('employees', 'id=eq.' + encodeURIComponent(body.id), patch, { allOutlets: true })
+                    .then(function (u) { return ok({ success: true, employee: rowToEmployee(u[0]) }); });
+                });
+              });
+            });
+          });
+        }).catch(serverError);
+    }
+    // ---- CREATE ----
+    if (role === 'kasir' && pin === '') {
+      return Promise.resolve(bad({ success: false, message: 'PIN wajib diisi untuk kasir baru (dipakai buka shift).' }));
+    }
+    return usernameTaken(username, null).then(function (taken) {
+      if (taken) return Promise.resolve(bad({ success: false, message: 'Username sudah dipakai.' }));
+      return hashPwIfNeeded(password).then(function (pwHash) {
+        var row = {
+          id: uid('emp'), name: name, role: role, active: true,
+          outlet_id: outletId, username: username || null,
+          pin_hash: pin ? hashPin(pin) : hashPin('0000'),
+          password_hash: pwHash
+        };
+        return ins('employees', [row], { allOutlets: true }).then(function (rows) {
+          return created({ success: true, employee: rowToEmployee(rows[0]) });
+        });
+      });
+    }).catch(serverError);
+  };
+
+  // 21b. POST /api/owner/employees/assign-outlets — { employee_id, outlet_ids[] }.
+  //      HANYA owner. Untuk menugaskan outlet ke Area Manager.
+  routes['POST /api/owner/employees/assign-outlets'] = function (body) {
+    var chk = requirePortal(['owner']);
+    if (!chk.ok) return Promise.resolve(chk.res);
+    var empId = body.employee_id;
+    var outletIds = Array.isArray(body.outlet_ids) ? body.outlet_ids.filter(Boolean) : [];
+    if (!empId) return Promise.resolve(bad({ success: false, message: 'ID pegawai wajib diisi.' }));
+    return sel('employees', 'select=id,role&id=eq.' + encodeURIComponent(empId) + '&limit=1', { allOutlets: true })
+      .then(function (er) {
+        if (!er.length) return notFound({ success: false, message: 'Pegawai tidak ditemukan.' });
+        if (er[0].role !== 'area_manager') return bad({ success: false, message: 'Hanya Area Manager yang bisa ditugaskan ke beberapa outlet.' });
+        return rawDel('manager_outlets', 'employee_id=eq.' + encodeURIComponent(empId)).then(function () {
+          if (!outletIds.length) return ok({ success: true });
+          var rows = outletIds.map(function (oid) { return { employee_id: empId, outlet_id: oid }; });
+          return rawIns('manager_outlets', rows).then(function () { return ok({ success: true }); });
+        });
+      }).catch(serverError);
+  };
+
+  // 21c. GET /api/owner/employees/outlets?employee_id= — outlet yang ditugaskan (owner).
+  routes['GET /api/owner/employees/outlets'] = function (body, query) {
+    var chk = requirePortal(['owner']);
+    if (!chk.ok) return Promise.resolve(chk.res);
+    var empId = query.employee_id;
+    if (!empId) return Promise.resolve(bad({ success: false, message: 'ID pegawai wajib diisi.' }));
+    return rawSel('manager_outlets', 'select=outlet_id&employee_id=eq.' + encodeURIComponent(empId))
+      .then(function (rows) {
+        return ok({ success: true, outlet_ids: (rows || []).map(function (r) { return r.outlet_id; }) });
+      }).catch(serverError);
+  };
+  // 22. POST /api/owner/employees/set-active — aktif/nonaktif pegawai (RBAC).
+  routes['POST /api/owner/employees/set-active'] = function (body) {
+    var chk = requirePortal(MANAGER_ROLES);
+    if (!chk.ok) return Promise.resolve(chk.res);
+    var me = chk.session;
+    if (!body.id) return Promise.resolve(bad({ success: false, message: 'ID pegawai wajib diisi' }));
+    if (body.id === me.id) return Promise.resolve(forbidden({ success: false, message: 'Tidak bisa menonaktifkan akun sendiri.' }));
+    return sel('employees', 'select=id,role,outlet_id&id=eq.' + encodeURIComponent(body.id) + '&limit=1', { allOutlets: true })
+      .then(function (er) {
+        if (!er.length) return notFound({ success: false, message: 'Pegawai tidak ditemukan' });
+        return employeeScopeIds(er[0]).then(function (scopeIds) {
+          return canManageEmployee(me, scopeIds).then(function (allowed) {
+            if (!allowed) return forbidden({ success: false, message: 'Pegawai di luar wewenangmu.' });
+            return upd('employees', 'id=eq.' + encodeURIComponent(body.id), { active: body.active !== false }, { allOutlets: true })
+              .then(function (u) {
+                if (!u.length) return notFound({ success: false, message: 'Pegawai tidak ditemukan' });
+                return ok({ success: true, employee: rowToEmployee(u[0]) });
+              });
+          });
+        });
+      }).catch(serverError);
+  };
 
   // 1. GET /api/menu
   routes['GET /api/menu'] = function () {
@@ -1880,50 +2071,22 @@
   /* Pegawai & Shift Kasir                                               */
   /* ================================================================== */
 
-  // 20. GET /api/owner/employees — daftar pegawai (tanpa pin_hash)
+  // 20. GET /api/owner/employees — daftar pegawai (tanpa pin_hash/password_hash).
+  //     Bila ada sesi portal non-owner: hanya pegawai dalam scope outlet sesi.
   routes['GET /api/owner/employees'] = function () {
-    return sel('employees', 'select=id,name,role,active,created_at&order=created_at.asc').then(function (rows) {
-      return ok({ success: true, employees: rows.map(rowToEmployee) });
-    }).catch(serverError);
-  };
-
-  // 21. POST /api/owner/employees/upsert — tambah / edit pegawai
-  //     body: { id?, name, pin?, role? } — pin hanya wajib saat tambah baru;
-  //     saat edit, pin boleh dikosongkan = tidak diubah.
-  routes['POST /api/owner/employees/upsert'] = function (body) {
-    var name = String(body.name || '').trim();
-    if (!name) return Promise.resolve(bad({ success: false, message: 'Nama pegawai wajib diisi' }));
-    var role = body.role === 'owner' ? 'owner' : 'kasir';
-    var pin = body.pin === undefined || body.pin === null ? '' : String(body.pin).trim();
-    if (body.id) {
-      return sel('employees', 'select=id&id=eq.' + encodeURIComponent(body.id)).then(function (er) {
-        if (!er.length) return notFound({ success: false, message: 'Pegawai tidak ditemukan' });
-        var patch = { name: name, role: role };
-        if (pin !== '') {
-          if (pin.length < 4) return bad({ success: false, message: 'PIN minimal 4 digit' });
-          patch.pin_hash = hashPin(pin);
-        }
-        return upd('employees', 'id=eq.' + encodeURIComponent(body.id), patch).then(function (u) {
-          return ok({ success: true, employee: rowToEmployee(u[0]) });
-        });
+    var s = getPortalSession();
+    var q = 'select=id,name,role,active,created_at,username,outlet_id&order=created_at.asc';
+    if (s && s.role !== 'owner') {
+      var ids = (s.outletIds || []).filter(function (id) { return id !== '*'; });
+      if (!ids.length) return Promise.resolve(ok({ success: true, employees: [] }));
+      q += '&outlet_id=in.(' + ids.map(encodeURIComponent).join(',') + ')';
+      return rawSel('employees', q).then(function (rows) {
+        return ok({ success: true, employees: rows.map(rowToEmployee) });
       }).catch(serverError);
     }
-    if (pin.length < 4) return Promise.resolve(bad({ success: false, message: 'PIN baru minimal 4 digit' }));
-    return ins('employees', [{
-      id: uid('emp'), name: name, pin_hash: hashPin(pin), role: role, active: true
-    }]).then(function (rows) {
-      return created({ success: true, employee: rowToEmployee(rows[0]) });
+    return sel('employees', q).then(function (rows) {
+      return ok({ success: true, employees: rows.map(rowToEmployee) });
     }).catch(serverError);
-  };
-
-  // 22. POST /api/owner/employees/set-active — aktif/nonaktif pegawai
-  routes['POST /api/owner/employees/set-active'] = function (body) {
-    if (!body.id) return Promise.resolve(bad({ success: false, message: 'ID pegawai wajib diisi' }));
-    return upd('employees', 'id=eq.' + encodeURIComponent(body.id), { active: body.active !== false })
-      .then(function (u) {
-        if (!u.length) return notFound({ success: false, message: 'Pegawai tidak ditemukan' });
-        return ok({ success: true, employee: rowToEmployee(u[0]) });
-      }).catch(serverError);
   };
 
   // 23. POST /api/shift/open — buka shift (verifikasi PIN pegawai)
