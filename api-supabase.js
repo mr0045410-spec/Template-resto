@@ -1687,9 +1687,20 @@
         + '&created_at=gte.' + encodeURIComponent(s.opened_at)
         + '&created_at=lte.' + encodeURIComponent(closedAt)
         + '&limit=5000';
-      return sel('orders', q).then(function (orders) {
+      // Refund diasumsikan keluar dari laci tunai (praktik warung), jadi
+      // mengurangi kas harapan. Tabel boleh belum ada -> anggap 0.
+      var refundP = sel('refund_logs',
+        'select=amount&created_at=gte.' + encodeURIComponent(s.opened_at)
+        + '&created_at=lte.' + encodeURIComponent(closedAt)
+        + '&limit=5000'
+      ).then(function (rl) {
+        return (rl || []).reduce(function (a, r) { return a + (Math.round(Number(r.amount)) || 0); }, 0);
+      }).catch(function () { return 0; });
+      return Promise.all([sel('orders', q), refundP]).then(function (res) {
+        var orders = res[0] || [];
+        var refundTotal = res[1] || 0;
         var cashSales = orders.reduce(function (a, o) { return a + (Number(o.total) || 0); }, 0);
-        var expected = (Number(s.opening_cash) || 0) + cashSales;
+        var expected = (Number(s.opening_cash) || 0) + cashSales - refundTotal;
         var closing = Math.max(0, Math.floor(Number(body.closing_cash) || 0));
         var patch = {
           closed_at: closedAt, expected_cash: expected, closing_cash: closing,
@@ -1717,6 +1728,81 @@
     limit = Math.min(200, limit);
     return sel('shifts', 'select=*&order=opened_at.desc&limit=' + limit).then(function (rows) {
       return ok({ success: true, shifts: rows.map(rowToShift) });
+    }).catch(serverError);
+  };
+
+  // 26b. GET /api/owner/shift-detail?shift_id=xxx — rincian satu shift:
+  //      info shift + daftar order dalam rentang shift + ringkasan
+  //      (omset, tunai/QRIS, diskon, void, refund).
+  routes['GET /api/owner/shift-detail'] = function (body, query) {
+    var shiftId = query && query.shift_id;
+    if (!shiftId) return Promise.resolve(bad({ success: false, message: 'shift_id wajib diisi' }));
+    return sel('shifts', 'select=*&id=eq.' + encodeURIComponent(shiftId)).then(function (srows) {
+      if (!srows.length) return notFound({ success: false, message: 'Shift tidak ditemukan' });
+      var s = srows[0];
+      var startIso = s.opened_at;
+      var endIso = s.closed_at || new Date().toISOString();
+      var enc = encodeURIComponent;
+      var orderP = sel('orders',
+        'select=id,created_at,total,subtotal,discount,payment_method,status,table_or_customer'
+        + '&created_at=gte.' + enc(startIso) + '&created_at=lte.' + enc(endIso)
+        + '&order=created_at.asc&limit=5000');
+      var voidP = sel('void_logs',
+        'select=order_id,reason,created_at&created_at=gte.' + enc(startIso)
+        + '&created_at=lte.' + enc(endIso) + '&limit=5000').catch(function () { return []; });
+      var refundP = sel('refund_logs',
+        'select=order_id,amount,reason,created_at&created_at=gte.' + enc(startIso)
+        + '&created_at=lte.' + enc(endIso) + '&limit=5000').catch(function () { return []; });
+      return Promise.all([orderP, voidP, refundP]).then(function (res) {
+        var orders = res[0] || [], voids = res[1] || [], refunds = res[2] || [];
+        var completed = orders.filter(function (o) { return o.status === 'completed'; });
+        var sum = function (arr, f) {
+          return arr.reduce(function (a, x) { return a + (Math.round(Number(f(x))) || 0); }, 0);
+        };
+        var cashTotal = sum(completed.filter(function (o) {
+          return String(o.payment_method || '').toLowerCase() === 'cash';
+        }), function (o) { return o.total; });
+        var qrisTotal = sum(completed, function (o) { return o.total; }) - cashTotal;
+        var detail = {
+          shift: rowToShift(s),
+          summary: {
+            orderCount: completed.length,
+            omset: sum(completed, function (o) { return o.total; }),
+            cashTotal: cashTotal,
+            qrisTotal: qrisTotal,
+            discountTotal: sum(completed, function (o) { return o.discount; }),
+            voidCount: voids.length,
+            refundCount: refunds.length,
+            refundTotal: sum(refunds, function (r) { return r.amount; })
+          },
+          orders: orders.map(function (o) {
+            return {
+              id: o.id, createdAt: o.created_at,
+              total: Math.round(Number(o.total) || 0),
+              paymentMethod: o.payment_method || 'cash',
+              status: o.status || 'completed',
+              tableOrCustomer: o.table_or_customer || ''
+            };
+          }),
+          voids: voids.map(function (v) {
+            return { orderId: v.order_id, reason: v.reason || '-', voidedAt: v.created_at };
+          }),
+          refunds: refunds.map(function (r) {
+            return {
+              orderId: r.order_id, amount: Math.round(Number(r.amount) || 0),
+              reason: r.reason || '-', refundedAt: r.created_at
+            };
+          })
+        };
+        // Nominal void per order (untuk tampilan) — ambil dari orders yg voided.
+        var voidTotals = {};
+        orders.forEach(function (o) {
+          if (o.status === 'voided') voidTotals[o.id] = Math.round(Number(o.total) || 0);
+        });
+        detail.voids.forEach(function (v) { v.amount = voidTotals[v.orderId] || 0; });
+        detail.summary.voidTotal = detail.voids.reduce(function (a, v) { return a + (v.amount || 0); }, 0);
+        return ok({ success: true, detail: detail });
+      });
     }).catch(serverError);
   };
 
