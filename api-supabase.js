@@ -86,22 +86,34 @@
   /* ------------------------------------------------------------------ */
   /* MULTI-OUTLET: scoping otomatis per outlet di sel/ins/upd/del.        */
   /* Tabel yg ikut: orders, menu_items, ingredients, shifts, employees.  */
-  /* Konteks outlet di localStorage (mykitchen_outlet_id): null = belum  */
-  /* pilih, 'ALL' = semua outlet (owner). Query internal lintas outlet   */
-  /* pakai rawSel/rawIns/rawUpd/rawDel.                                  */
+  /* Konteks outlet di localStorage. Kunci bisa ditimpa per halaman lewat
+  /* window.__mykitchenOutletKey (dipanggil malas saat query, jadi boleh
+  /* diset kapan saja sebelum query pertama). POS pakai key default
+  /* 'mykitchen_outlet_id' (outlet perangkat/shift), owner pakai key
+  /* sendiri 'mykitchen_owner_outlet_filter' (filter tampilan) agar filter
+  /* owner tidak mengacak konteks outlet POS. Nilai: null = belum pilih,
+  /* 'ALL' = semua outlet (owner). Query internal lintas outlet pakai
+  /* rawSel/rawIns/rawUpd/rawDel.                                          */
   /* Probe kolom outlet_id sekali (pola ordersHasShiftId): bila skema    */
   /* belum di-run user, scoping nonaktif -> mode outlet tunggal lama.    */
   /* ------------------------------------------------------------------ */
   var OUTLET_TABLES = { orders: 1, menu_items: 1, ingredients: 1, shifts: 1, employees: 1 };
   var _hasOutletCol = null;
+  var _outletKey = null;
+  function outletStorageKey() {
+    if (_outletKey) return _outletKey;
+    try { _outletKey = window.__mykitchenOutletKey || 'mykitchen_outlet_id'; }
+    catch (e) { _outletKey = 'mykitchen_outlet_id'; }
+    return _outletKey;
+  }
   function currentOutletId() {
-    try { return localStorage.getItem('mykitchen_outlet_id') || null; }
+    try { return localStorage.getItem(outletStorageKey()) || null; }
     catch (e) { return null; }
   }
   function setOutletId(id) {
     try {
-      if (!id) localStorage.removeItem('mykitchen_outlet_id');
-      else localStorage.setItem('mykitchen_outlet_id', id);
+      if (!id) localStorage.removeItem(outletStorageKey());
+      else localStorage.setItem(outletStorageKey(), id);
     } catch (e) {}
   }
   function outletReady() {
