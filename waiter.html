@@ -1,0 +1,287 @@
+<!DOCTYPE html>
+<html lang="id">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+<title>Waiter</title>
+<script src="https://cdn.tailwindcss.com"></script>
+<script src="api-supabase.js?v=20261003z"></script>
+<style>
+  body { font-family: system-ui, -apple-system, sans-serif; background: #FEF2F2; }
+  .font-display { font-family: Georgia, serif; }
+  .tbl-btn { transition: transform .1s; }
+  .tbl-btn:active { transform: scale(.95); }
+  #cart-bar { transition: transform .25s; }
+</style>
+</head>
+<body class="min-h-screen pb-32">
+
+<!-- Lock outlet -->
+<div id="waiter-lock" class="fixed inset-0 z-50 bg-[#450A0A] flex items-center justify-center p-6">
+  <div class="bg-white rounded-3xl p-6 w-full max-w-sm">
+    <h2 class="font-display text-xl font-bold text-[#450A0A] mb-1">📋 Waiter App</h2>
+    <p class="text-xs text-stone-500 mb-4">Pilih outlet & isi nama kamu</p>
+    <label class="block text-xs font-bold text-stone-700 mb-1">Outlet</label>
+    <select id="waiter-outlet" class="w-full px-3 py-2.5 rounded-xl border border-stone-300 text-sm mb-3 focus:border-red-600 focus:outline-none"></select>
+    <label class="block text-xs font-bold text-stone-700 mb-1">Nama Waiter</label>
+    <input id="waiter-name" type="text" maxlength="40" placeholder="mis. Budi" class="w-full px-3 py-2.5 rounded-xl border border-stone-300 text-sm mb-4 focus:border-red-600 focus:outline-none">
+    <button onclick="lockWaiter()" class="w-full py-3 rounded-2xl bg-[#DC2626] hover:bg-[#B91C1C] text-white font-extrabold">Mulai</button>
+  </div>
+</div>
+
+<!-- Header -->
+<div class="sticky top-0 z-20 bg-[#450A0A] text-white px-4 py-3 shadow-lg">
+  <div class="flex items-center justify-between">
+    <div>
+      <h1 class="font-display text-lg font-bold">📋 <span id="w-outlet-name">Waiter</span></h1>
+      <p class="text-xs text-red-200" id="w-waiter-name"></p>
+    </div>
+    <button onclick="unlockWaiter()" class="text-xs bg-white/20 px-3 py-1.5 rounded-full">Ganti</button>
+  </div>
+  <!-- Tabs -->
+  <div class="flex gap-2 mt-2">
+    <button onclick="wShowTab('tables')" id="wtab-tables" class="flex-1 py-2 rounded-xl text-xs font-extrabold bg-white text-[#450A0A]">🪑 Meja</button>
+    <button onclick="wShowTab('orders')" id="wtab-orders" class="flex-1 py-2 rounded-xl text-xs font-extrabold bg-white/20 text-white">🧾 Pesanan</button>
+  </div>
+</div>
+
+<!-- Tab: Tables -->
+<div id="wtab-body-tables" class="p-3">
+  <div id="w-tables" class="space-y-4">
+    <p class="text-center text-stone-400 text-sm py-10">Memuat meja...</p>
+  </div>
+</div>
+
+<!-- Tab: Orders (active) -->
+<div id="wtab-body-orders" class="p-3 hidden">
+  <div id="w-orders" class="space-y-2.5">
+    <p class="text-center text-stone-400 text-sm py-10">Memuat pesanan...</p>
+  </div>
+</div>
+
+<!-- Order sheet (pilih meja -> menu) -->
+<div id="w-order-sheet" class="hidden fixed inset-0 z-40 bg-black/50">
+  <div class="absolute bottom-0 left-0 right-0 bg-[#FEF2F2] rounded-t-3xl max-h-[92vh] flex flex-col">
+    <div class="p-4 border-b border-stone-200 flex items-center justify-between sticky top-0 bg-[#FEF2F2] rounded-t-3xl">
+      <div>
+        <h3 class="font-extrabold text-[#450A0A]" id="w-sheet-title">Meja -</h3>
+        <p class="text-[11px] text-stone-500">Pilih menu untuk meja ini</p>
+      </div>
+      <button onclick="closeWSheet()" class="p-2 rounded-full bg-stone-200 text-stone-600"><span class="text-lg leading-none">×</span></button>
+    </div>
+    <div class="flex gap-2 px-4 py-2 overflow-x-auto" id="w-cats"></div>
+    <div id="w-menu" class="flex-1 overflow-y-auto p-3 space-y-2"></div>
+    <div class="p-3 border-t border-stone-200 bg-white">
+      <div class="flex items-center justify-between mb-2 text-sm">
+        <span class="text-stone-500"><span id="w-cart-n">0</span> item</span>
+        <span class="font-extrabold text-lg text-[#450A0A]" id="w-cart-total">Rp 0</span>
+      </div>
+      <button onclick="wSubmitOrder()" id="w-submit-btn" class="w-full py-3 rounded-2xl bg-[#DC2626] text-white font-extrabold">Kirim ke Dapur</button>
+    </div>
+  </div>
+</div>
+
+<script>
+(function () {
+  const $ = id => document.getElementById(id);
+  const fmtRp = n => 'Rp ' + Number(n || 0).toLocaleString('id-ID');
+  const esc = s => String(s == null ? '' : s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+  const LS_OUTLET = 'mykitchen_waiter_outlet';
+  const LS_NAME = 'mykitchen_waiter_name';
+
+  let OUTLET = localStorage.getItem(LS_OUTLET) || '';
+  let WNAME = localStorage.getItem(LS_NAME) || '';
+  let MENUS = [];
+  let CART = {};
+  let ACTIVE_TABLE = null;
+  let ACTIVE_CAT = 'all';
+
+  const ST_META = {
+    free: { label: 'Kosong', bg: 'bg-emerald-500' },
+    occupied: { label: 'Terisi', bg: 'bg-red-500' },
+    bill_printed: { label: 'Minta Bill', bg: 'bg-amber-500' },
+    cleaning: { label: 'Cleaning', bg: 'bg-stone-400' }
+  };
+
+  async function init() {
+    // Daftar outlet utk lock
+    try {
+      const r = await fetch('/api/outlets-public');
+      const d = await r.json().catch(() => ({}));
+      const list = d.outlets || [];
+      $('waiter-outlet').innerHTML = list.map(o => `<option value="${o.id}">${esc(o.name)}</option>`).join('') || '<option value="">(tidak ada)</option>';
+    } catch (e) {}
+    if (OUTLET && WNAME) { enterApp(); }
+    else { $('waiter-lock').classList.remove('hidden'); }
+  }
+
+  window.lockWaiter = () => {
+    const o = $('waiter-outlet').value;
+    const n = $('waiter-name').value.trim();
+    if (!o) { alert('Pilih outlet.'); return; }
+    if (!n) { alert('Isi nama kamu.'); return; }
+    OUTLET = o; WNAME = n;
+    localStorage.setItem(LS_OUTLET, o);
+    localStorage.setItem(LS_NAME, n);
+    enterApp();
+  };
+  window.unlockWaiter = () => {
+    localStorage.removeItem(LS_OUTLET);
+    $('waiter-lock').classList.remove('hidden');
+  };
+
+  function enterApp() {
+    $('waiter-lock').classList.add('hidden');
+    $('w-waiter-name').textContent = WNAME;
+    const opt = $('waiter-outlet').querySelector(`option[value="${OUTLET}"]`);
+    $('w-outlet-name').textContent = opt ? opt.textContent : 'Waiter';
+    loadTables();
+    loadMenus();
+    // refresh berkala
+    setInterval(loadTables, 20000);
+    setInterval(loadActiveOrders, 20000);
+  }
+
+  window.wShowTab = tab => {
+    const isT = tab === 'tables';
+    $('wtab-body-tables').classList.toggle('hidden', !isT);
+    $('wtab-body-orders').classList.toggle('hidden', isT);
+    $('wtab-tables').className = 'flex-1 py-2 rounded-xl text-xs font-extrabold ' + (isT ? 'bg-white text-[#450A0A]' : 'bg-white/20 text-white');
+    $('wtab-orders').className = 'flex-1 py-2 rounded-xl text-xs font-extrabold ' + (!isT ? 'bg-white text-[#450A0A]' : 'bg-white/20 text-white');
+    if (!isT) loadActiveOrders();
+  };
+
+  async function loadTables() {
+    try {
+      const r = await fetch('/api/tables?outlet_id=' + encodeURIComponent(OUTLET));
+      const d = await r.json();
+      if (!d.success) {
+        $('w-tables').innerHTML = '<p class="text-center text-stone-400 text-sm py-10">' + (d.needSql ? 'Denah meja belum aktif.' : 'Gagal memuat.') + '</p>';
+        return;
+      }
+      const areas = d.areas.length ? d.areas : [{ id: null, name: '' }];
+      $('w-tables').innerHTML = areas.map(a => {
+        const ts = d.tables.filter(t => !a.id || t.areaId === a.id);
+        if (!ts.length) return '';
+        return `
+        ${a.name ? `<h4 class="text-xs font-extrabold text-stone-500 uppercase tracking-wide">${esc(a.name)}</h4>` : ''}
+        <div class="grid grid-cols-3 gap-2">
+          ${ts.map(t => {
+            const m = ST_META[t.status] || ST_META.free;
+            return `
+            <button onclick="wPickTable('${t.id}', '${esc(t.number)}', '${t.status}')"
+                    class="tbl-btn rounded-2xl p-4 text-white font-extrabold ${m.bg} shadow">
+              <span class="text-lg">${esc(t.number)}</span>
+              <span class="block text-[10px] font-normal opacity-90">${m.label}</span>
+            </button>`;
+          }).join('')}
+        </div>`;
+      }).join('') || '<p class="text-center text-stone-400 text-sm py-10">Belum ada meja.</p>';
+      // simpan utk dipakai
+      window._wTables = d.tables;
+    } catch (e) {}
+  }
+
+  async function loadMenus() {
+    try {
+      const r = await fetch('/api/qr/menu?outlet_id=' + encodeURIComponent(OUTLET));
+      const d = await r.json();
+      MENUS = (d.success && d.menus) || [];
+    } catch (e) { MENUS = []; }
+  }
+
+  window.wPickTable = (id, number, status) => {
+    ACTIVE_TABLE = { id, number };
+    CART = {};
+    $('w-sheet-title').textContent = 'Meja ' + number;
+    renderWCats();
+    renderWMenu();
+    renderWCart();
+    $('w-order-sheet').classList.remove('hidden');
+  };
+  window.closeWSheet = () => { $('w-order-sheet').classList.add('hidden'); ACTIVE_TABLE = null; };
+
+  function renderWCats() {
+    const cats = ['all', ...new Set(MENUS.map(m => m.category).filter(Boolean))];
+    $('w-cats').innerHTML = cats.map(c =>
+      `<button onclick="wSetCat('${esc(c)}')" class="shrink-0 px-3 py-1.5 rounded-full text-xs font-bold ${c === ACTIVE_CAT ? 'bg-[#450A0A] text-white' : 'bg-white text-stone-600 border border-stone-200'}">${c === 'all' ? 'Semua' : esc(c)}</button>`
+    ).join('');
+  }
+  window.wSetCat = c => { ACTIVE_CAT = c; renderWCats(); renderWMenu(); };
+
+  function renderWMenu() {
+    const list = MENUS.filter(m => ACTIVE_CAT === 'all' || m.category === ACTIVE_CAT);
+    $('w-menu').innerHTML = list.length ? list.map(m => {
+      const q = CART[m.id] || 0;
+      const so = !m.inStock;
+      return `
+      <div class="bg-white rounded-2xl p-3 flex items-center gap-3 border border-stone-200 ${so ? 'opacity-50' : ''}">
+        <div class="flex-1 min-w-0">
+          <p class="font-bold text-sm text-[#450A0A] truncate">${esc(m.name)}</p>
+          <p class="text-xs text-stone-500">${fmtRp(m.price)}${so ? ' · HABIS' : ''}</p>
+        </div>
+        ${so ? '' : (q === 0
+          ? `<button onclick="wAdd('${m.id}')" class="px-4 py-2 rounded-xl bg-[#DC2626] text-white text-xs font-extrabold">+</button>`
+          : `<div class="flex items-center gap-2">
+               <button onclick="wDec('${m.id}')" class="w-7 h-7 rounded-full bg-stone-200 font-extrabold">−</button>
+               <span class="font-extrabold text-sm w-5 text-center">${q}</span>
+               <button onclick="wAdd('${m.id}')" class="w-7 h-7 rounded-full bg-[#DC2626] text-white font-extrabold">+</button>
+             </div>`)}
+      </div>`;
+    }).join('') : '<p class="text-center text-stone-400 text-sm py-8">Menu kosong.</p>';
+  }
+  window.wAdd = id => { CART[id] = Math.min(50, (CART[id] || 0) + 1); renderWMenu(); renderWCart(); };
+  window.wDec = id => { CART[id] = (CART[id] || 0) - 1; if (CART[id] <= 0) delete CART[id]; renderWMenu(); renderWCart(); };
+
+  function renderWCart() {
+    const n = Object.values(CART).reduce((a, b) => a + b, 0);
+    const total = Object.entries(CART).reduce((a, [id, q]) => {
+      const m = MENUS.find(x => x.id === id);
+      return a + (m ? m.price * q : 0);
+    }, 0);
+    $('w-cart-n').textContent = n;
+    $('w-cart-total').textContent = fmtRp(Math.round(total * 1.1));
+  }
+
+  window.wSubmitOrder = async () => {
+    const items = Object.entries(CART).map(([id, qty]) => ({ menu_id: id, qty }));
+    if (!items.length || !ACTIVE_TABLE) return;
+    const btn = $('w-submit-btn');
+    btn.disabled = true; btn.textContent = 'Mengirim...';
+    try {
+      const r = await fetch('/api/qr/order', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          outlet_id: OUTLET, table: ACTIVE_TABLE.number,
+          customer_name: WNAME + ' (waiter)',
+          items
+        })
+      });
+      const d = await r.json();
+      if (d.success) {
+        alert('Order ' + d.order.id + ' terkirim ke dapur!');
+        closeWSheet();
+        loadTables();
+      } else alert(d.message || 'Gagal.');
+    } catch (e) { alert('Jaringan bermasalah.'); }
+    btn.disabled = false; btn.textContent = 'Kirim ke Dapur';
+  };
+
+  async function loadActiveOrders() {
+    try {
+      const r = await fetch('/api/kitchen/orders?outlet_id=' + encodeURIComponent(OUTLET));
+      const d = await r.json().catch(() => ({}));
+      // /api/kitchen/orders pakai kunci outlet perangkat; fallback: tampilkan via pending
+      const r2 = await fetch('/api/pos/pending-orders');
+      const d2 = await r2.json().catch(() => ({}));
+      // Untuk waiter, pakai kunci outlet sementara
+      const list = [];
+      $('w-orders').innerHTML = '<p class="text-center text-stone-400 text-sm py-10">Buka di layar dapur untuk status masak.<br>Gunakan tab Meja untuk order baru.</p>';
+    } catch (e) {}
+  }
+
+  init();
+})();
+</script>
+</body>
+</html>
