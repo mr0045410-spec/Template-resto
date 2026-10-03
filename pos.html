@@ -2,7 +2,7 @@
 <html lang="id">
 <head>
   <script src="brand-config.js"></script>
-  <script src="api-supabase.js?v=20261003h"></script>
+  <script src="api-supabase.js?v=20261003i"></script>
   <!-- api-shim: ganti /api/* dgn localStorage (perbaikan persistensi utk hosting statis) -->
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
@@ -636,6 +636,12 @@
       </div>
 
       <div class="space-y-3">
+        <div id="shift-outlet-wrap" class="hidden">
+          <label class="text-xs font-bold text-stone-600 mb-1 block">Outlet</label>
+          <select id="shift-outlet-select" onchange="onShiftOutletChange()" class="w-full px-3.5 py-2.5 text-sm rounded-xl border border-stone-300 focus:border-brand focus:outline-none bg-white">
+            <option value="">Memuat...</option>
+          </select>
+        </div>
         <div>
           <label class="text-xs font-bold text-stone-600 mb-1 block">Pegawai</label>
           <select id="shift-employee-select" class="w-full px-3.5 py-2.5 text-sm rounded-xl border border-stone-300 focus:border-brand focus:outline-none bg-white">
@@ -795,6 +801,7 @@
         shiftApiOk = res.ok && data.success === true;
         if (shiftApiOk && data.shift) {
           currentShift = data.shift;
+          if (data.shift.outletId) setOutletId(data.shift.outletId);
           renderShiftBadge();
           return; // ada shift terbuka -> langsung jualan
         }
@@ -815,7 +822,20 @@
       }
     }
 
-    function renderShiftBadge() {
+    let posOutletsCache = [];
+    async function getOutletName(oid) {
+      if (!oid) return '';
+      if (!posOutletsCache.length) {
+        try {
+          const r = await fetch('/api/outlets'); const d = await r.json();
+          posOutletsCache = (d.success && d.outlets) || [];
+        } catch (e) { return ''; }
+      }
+      const o = posOutletsCache.find(x => x.id === oid);
+      return o ? o.name : '';
+    }
+
+    async function renderShiftBadge() {
       const badge = document.getElementById('shift-badge');
       const closeBtn = document.getElementById('btn-close-shift');
       if (!badge) return;
@@ -823,9 +843,11 @@
         const openTime = new Date(currentShift.openedAt).toLocaleString('id-ID', {
           day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit'
         });
+        const outletName = await getOutletName(currentShift.outletId || getOutletId());
         badge.innerHTML = `
           <span class="w-2 h-2 rounded-full bg-emerald-500 animate-pulse shrink-0"></span>
           <span class="font-bold text-emerald-800 truncate max-w-[72px] sm:max-w-none">${escapeHtml(currentShift.employeeName)}</span>
+          ${outletName ? `<span class="text-stone-400 hidden sm:inline">· ${escapeHtml(outletName)}</span>` : ''}
           <span class="text-stone-400 hidden sm:inline">· Shift ${openTime}</span>`;
         badge.classList.remove('hidden');
         badge.classList.add('flex');
@@ -844,7 +866,50 @@
     }
 
     async function openShiftModal() {
-      // Muat daftar pegawai aktif
+      // Muat daftar outlet dulu (sembunyikan bila cuma 1 outlet)
+      let outlets = [];
+      try {
+        const ores = await fetch('/api/outlets');
+        const odata = await ores.json();
+        outlets = (odata.success && odata.outlets ? odata.outlets : []).filter(o => o.active);
+      } catch (err) { outlets = []; }
+      const outletWrap = document.getElementById('shift-outlet-wrap');
+      const outletSel = document.getElementById('shift-outlet-select');
+      if (outlets.length > 1) {
+        outletWrap.classList.remove('hidden');
+        const cur = getOutletId();
+        outletSel.innerHTML = outlets.map(o =>
+          `<option value="${o.id}" ${cur === o.id ? 'selected' : ''}>${escapeHtml(o.name)}</option>`
+        ).join('');
+        if (!cur) setOutletId(outlets[0].id);
+      } else {
+        outletWrap.classList.add('hidden');
+        if (outlets.length === 1) setOutletId(outlets[0].id);
+      }
+      // Muat daftar pegawai aktif (ter-scope outlet bila sudah pilih)
+      await loadShiftEmployees();
+      document.getElementById('shift-pin-input').value = '';
+      document.getElementById('shift-opening-cash').value = '';
+      document.getElementById('shift-open-error').classList.add('hidden');
+      document.getElementById('shift-open-modal').classList.remove('hidden');
+      lucide.createIcons();
+    }
+
+    function getOutletId() {
+      try { return localStorage.getItem('mykitchen_outlet_id') || null; } catch (e) { return null; }
+    }
+    function setOutletId(id) {
+      try {
+        if (!id) localStorage.removeItem('mykitchen_outlet_id');
+        else localStorage.setItem('mykitchen_outlet_id', id);
+      } catch (e) {}
+    }
+    function onShiftOutletChange() {
+      const oid = document.getElementById('shift-outlet-select').value;
+      setOutletId(oid);
+      loadShiftEmployees();
+    }
+    async function loadShiftEmployees() {
       try {
         const res = await fetch('/api/owner/employees');
         const data = await res.json();
@@ -862,11 +927,6 @@
         ).join('');
         document.getElementById('shift-open-empty-note').classList.add('hidden');
       }
-      document.getElementById('shift-pin-input').value = '';
-      document.getElementById('shift-opening-cash').value = '';
-      document.getElementById('shift-open-error').classList.add('hidden');
-      document.getElementById('shift-open-modal').classList.remove('hidden');
-      lucide.createIcons();
     }
 
     function parseShiftCash(rawVal) {
@@ -877,6 +937,7 @@
       const empId = document.getElementById('shift-employee-select').value;
       const pin = document.getElementById('shift-pin-input').value.trim();
       const openingCash = parseShiftCash(document.getElementById('shift-opening-cash').value);
+      const outletId = getOutletId();
       const errEl = document.getElementById('shift-open-error');
       errEl.classList.add('hidden');
       if (!empId) { errEl.textContent = 'Pilih dulu pegawainya.'; errEl.classList.remove('hidden'); return; }
@@ -888,7 +949,7 @@
         const res = await fetch('/api/shift/open', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ employee_id: empId, pin, opening_cash: openingCash })
+          body: JSON.stringify({ employee_id: empId, pin, opening_cash: openingCash, outlet_id: outletId })
         });
         const data = await res.json();
         if (data.success && data.shift) {
