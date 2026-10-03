@@ -2,7 +2,7 @@
 <html lang="id">
 <head>
   <script src="brand-config.js"></script>
-  <script src="api-supabase.js?v=20261004d"></script>
+  <script src="api-supabase.js?v=20261004e"></script>
   <!-- api-shim: ganti /api/* dgn localStorage (perbaikan persistensi utk hosting statis) -->
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
@@ -155,6 +155,13 @@
         <i data-lucide="smartphone" class="w-4 h-4"></i>
         <span class="hidden sm:inline">Order QR</span>
         <span id="qr-pending-badge" class="hidden absolute -top-1.5 -right-1.5 min-w-[18px] h-[18px] px-1 bg-red-600 text-white text-[10px] font-bold rounded-full items-center justify-center border-2 border-white">0</span>
+      </button>
+
+      <!-- Bill Meja -->
+      <button onclick="openBillModal()" class="relative px-2 sm:px-3.5 py-1.5 rounded-xl shrink-0 bg-amber-50 hover:bg-amber-100 border border-amber-200 text-amber-700 font-semibold text-xs flex items-center gap-1.5 transition-colors">
+        <i data-lucide="receipt-text" class="w-4 h-4"></i>
+        <span class="hidden sm:inline">Bill Meja</span>
+        <span id="bill-badge" class="hidden absolute -top-1.5 -right-1.5 min-w-[18px] h-[18px] px-1 bg-red-600 text-white text-[10px] font-bold rounded-full items-center justify-center border-2 border-white">0</span>
       </button>
 
       <!-- Riwayat Pesanan Modal Trigger -->
@@ -659,8 +666,7 @@
     </div>
   </div>
 
-  <div id="qr-pending-modal" class="hidden fixed inset-0 z-50 flex items-center justify-center p-4 bg-[#450A0A]/80 backdrop-blur-sm">
-    <div class="w-full max-w-lg bg-white rounded-3xl p-5 sm:p-6 shadow-2xl border border-stone-200 flex flex-col max-h-[90vh]">
+  <div id="qr-pending-modal" class="hidden fixed inset-0 z-50 flex items-center justify-center p-4 bg-[#450A0A]/80 backdrop-blur-sm">    <div class="w-full max-w-lg bg-white rounded-3xl p-5 sm:p-6 shadow-2xl border border-stone-200 flex flex-col max-h-[90vh]">
       <div class="flex items-center justify-between pb-3 border-b border-stone-100">
         <div>
           <h3 class="text-base font-extrabold text-[#450A0A]">📱 Order QR Tamu (Belum Bayar)</h3>
@@ -672,6 +678,49 @@
       </div>
       <div id="qr-pending-list" class="flex-1 overflow-y-auto py-3 space-y-2 text-xs">
         <p class="text-center text-stone-400 py-6">Memuat...</p>
+      </div>
+    </div>
+  </div>
+
+  <!-- Bill Meja -->
+  <div id="bill-modal" class="hidden fixed inset-0 z-50 flex items-center justify-center p-4 bg-[#450A0A]/80 backdrop-blur-sm">
+    <div class="w-full max-w-lg bg-white rounded-3xl p-5 sm:p-6 shadow-2xl border border-stone-200 flex flex-col max-h-[90vh]">
+      <div class="flex items-center justify-between pb-3 border-b border-stone-100">
+        <div>
+          <h3 class="text-base font-extrabold text-[#450A0A]">🧾 Bill Meja (Belum Bayar)</h3>
+          <p class="text-xs text-stone-500">Pilih meja untuk lihat & bayar tagihan</p>
+        </div>
+        <button onclick="closeBillModal()" class="p-2 rounded-full text-stone-400 hover:text-stone-700 hover:bg-stone-100">
+          <i data-lucide="x" class="w-5 h-5"></i>
+        </button>
+      </div>
+      <div id="bill-list" class="flex-1 overflow-y-auto py-3 space-y-2 text-xs">
+        <p class="text-center text-stone-400 py-6">Memuat...</p>
+      </div>
+    </div>
+  </div>
+
+  <!-- Detail Bill Meja -->
+  <div id="bill-detail-modal" class="hidden fixed inset-0 z-50 flex items-center justify-center p-4 bg-[#450A0A]/80 backdrop-blur-sm">
+    <div class="w-full max-w-lg bg-white rounded-3xl p-5 sm:p-6 shadow-2xl border border-stone-200 flex flex-col max-h-[90vh]">
+      <div class="flex items-center justify-between pb-3 border-b border-stone-100">
+        <div>
+          <h3 class="text-base font-extrabold text-[#450A0A]" id="bill-detail-title">Meja -</h3>
+          <p class="text-xs text-stone-500">Centang item untuk split bill</p>
+        </div>
+        <button onclick="closeBillDetail()" class="p-2 rounded-full text-stone-400 hover:text-stone-700 hover:bg-stone-100">
+          <i data-lucide="x" class="w-5 h-5"></i>
+        </button>
+      </div>
+      <div id="bill-detail-items" class="flex-1 overflow-y-auto py-3 space-y-3 text-xs"></div>
+      <div class="pt-3 border-t border-stone-100">
+        <div class="flex justify-between font-extrabold text-sm mb-3">
+          <span>Total</span><span id="bill-detail-total">Rp 0</span>
+        </div>
+        <div class="flex gap-2">
+          <button onclick="payBillAll()" class="flex-1 py-3 rounded-2xl bg-brand text-white font-extrabold text-sm">Bayar Semua</button>
+          <button onclick="payBillSplit()" id="bill-split-btn" class="flex-1 py-3 rounded-2xl bg-amber-500 text-white font-extrabold text-sm hidden">Pisah & Bayar (<span id="bill-split-n">0</span>)</button>
+        </div>
       </div>
     </div>
   </div>
@@ -813,8 +862,8 @@
     setInterval(updateClock, 1000);
     updateClock();
     // Badge order QR pending: refresh tiap 20 detik
-    setInterval(() => { try { refreshQrBadge(); } catch (e) {} }, 20000);
-    setTimeout(() => { try { refreshQrBadge(); } catch (e) {} }, 3000);
+    setInterval(() => { try { refreshQrBadge(); refreshBillBadge(); } catch (e) {} }, 20000);
+    setTimeout(() => { try { refreshQrBadge(); refreshBillBadge(); } catch (e) {} }, 3000);
 
     // Init App
     // URUTAN PENTING (multi-outlet): kunci outlet dari shift DULU
@@ -2501,6 +2550,134 @@
         const data = await res.json();
         updateQrBadge(((data.success && data.orders) || []).length);
       } catch (e) {}
+    }
+
+    // ===== Bill Meja =====
+    let billData = [];
+    let billActive = null;
+    let billPicks = {}; // "orderId:idx" -> qty
+
+    async function openBillModal() {
+      document.getElementById('bill-modal').classList.remove('hidden');
+      await loadBillList();
+    }
+    function closeBillModal() {
+      document.getElementById('bill-modal').classList.add('hidden');
+    }
+    async function loadBillList() {
+      const box = document.getElementById('bill-list');
+      box.innerHTML = '<p class="text-center text-stone-400 py-6">Memuat...</p>';
+      try {
+        const res = await fetch('/api/pos/table-bills');
+        const data = await res.json();
+        billData = (data.success && data.bills) || [];
+        updateBillBadge(billData.length);
+        if (!billData.length) {
+          box.innerHTML = '<p class="text-center text-stone-400 py-6">Tidak ada bill terbuka.</p>';
+          return;
+        }
+        box.innerHTML = billData.map(b => `
+          <button onclick="openBillDetail('${escapeHtml(b.table)}')" class="w-full text-left bg-amber-50 border border-amber-200 rounded-2xl p-3 flex items-center gap-3 hover:bg-amber-100">
+            <div class="w-12 h-12 rounded-2xl bg-amber-500 text-white flex items-center justify-center font-extrabold">🪑</div>
+            <div class="flex-1 min-w-0">
+              <p class="font-extrabold text-sm text-[#450A0A]">Meja ${escapeHtml(b.table)}</p>
+              <p class="text-[11px] text-stone-500">${b.orders.length} order · ${b.itemCount} item</p>
+            </div>
+            <div class="text-right shrink-0">
+              <p class="font-extrabold text-sm">${formatRupiah(b.total)}</p>
+              <p class="text-[10px] text-stone-400">ketuk →</p>
+            </div>
+          </button>`).join('');
+      } catch (e) {
+        box.innerHTML = '<p class="text-center text-stone-400 py-6">Gagal memuat.</p>';
+      }
+    }
+    function updateBillBadge(n) {
+      const b = document.getElementById('bill-badge');
+      if (!b) return;
+      if (n > 0) { b.textContent = n; b.classList.remove('hidden'); b.classList.add('flex'); }
+      else { b.classList.add('hidden'); b.classList.remove('flex'); }
+    }
+    async function refreshBillBadge() {
+      try {
+        const res = await fetch('/api/pos/table-bills');
+        const data = await res.json();
+        updateBillBadge(((data.success && data.bills) || []).length);
+      } catch (e) {}
+    }
+    function openBillDetail(table) {
+      billActive = billData.find(b => b.table === table);
+      billPicks = {};
+      if (!billActive) return;
+      document.getElementById('bill-detail-title').textContent = 'Meja ' + table;
+      renderBillDetail();
+      document.getElementById('bill-detail-modal').classList.remove('hidden');
+    }
+    function closeBillDetail() {
+      document.getElementById('bill-detail-modal').classList.add('hidden');
+      billActive = null;
+    }
+    function renderBillDetail() {
+      const box = document.getElementById('bill-detail-items');
+      box.innerHTML = billActive.orders.map(o => `
+        <div class="bg-stone-50 border border-stone-200 rounded-2xl p-3">
+          <p class="text-[10px] font-bold text-stone-400 mb-2 font-mono">${escapeHtml(o.id.slice(-8))}${o.customer ? ' · ' + escapeHtml(o.customer) : ''}</p>
+          ${o.items.map(it => {
+            const key = o.id + ':' + it.idx;
+            const checked = billPicks[key] ? 'checked' : '';
+            return `
+            <label class="flex items-center gap-2 py-1.5 cursor-pointer">
+              <input type="checkbox" ${checked} onchange="billTogglePick('${o.id}', ${it.idx}, this.checked)" class="w-4 h-4 accent-amber-500">
+              <span class="flex-1 text-[13px]">${escapeHtml(it.name)} <span class="text-stone-400">×${it.qty}</span></span>
+              <span class="font-bold text-[13px]">${formatRupiah(it.price * it.qty)}</span>
+            </label>`;
+          }).join('')}
+        </div>`).join('');
+      document.getElementById('bill-detail-total').textContent = formatRupiah(billActive.total);
+      const n = Object.keys(billPicks).length;
+      document.getElementById('bill-split-n').textContent = n;
+      document.getElementById('bill-split-btn').classList.toggle('hidden', !n);
+    }
+    function billTogglePick(orderId, idx, on) {
+      const key = orderId + ':' + idx;
+      if (on) billPicks[key] = true; else delete billPicks[key];
+      renderBillDetail();
+    }
+    async function payBillAll() {
+      if (!billActive || !confirm('Bayar SEMUA tagihan meja ' + billActive.table + ' (' + formatRupiah(billActive.total) + ')?')) return;
+      try {
+        const res = await fetch('/api/pos/checkout-table', {
+          method: 'POST', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ table: billActive.table, payment_method: 'cash', cashier: 'Kasir' })
+        });
+        const d = await res.json();
+        if (d.success) {
+          toast('Meja ' + billActive.table + ' lunas (' + d.count + ' order).', 'success');
+          closeBillDetail(); closeBillModal(); loadBillList();
+        } else toast(d.message || 'Gagal.', 'error');
+      } catch (e) { toast('Jaringan bermasalah.', 'error'); }
+    }
+    async function payBillSplit() {
+      const keys = Object.keys(billPicks);
+      if (!billActive || !keys.length) return;
+      const picks = keys.map(k => {
+        const [order_id, idx] = k.split(':');
+        const o = billActive.orders.find(x => x.id === order_id);
+        const it = o && o.items.find(i => String(i.idx) === idx);
+        return { order_id, idx: Number(idx), qty: it ? it.qty : 0 };
+      });
+      if (!confirm('Pisah & bayar ' + picks.length + ' item dari meja ' + billActive.table + '?')) return;
+      try {
+        const res = await fetch('/api/pos/split-pay', {
+          method: 'POST', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ table: billActive.table, picks, payment_method: 'cash', cashier: 'Kasir' })
+        });
+        const d = await res.json();
+        if (d.success) {
+          toast('Split bill lunas: ' + formatRupiah(d.total), 'success');
+          closeBillDetail(); closeBillModal(); loadBillList();
+        } else toast(d.message || 'Gagal.', 'error');
+      } catch (e) { toast('Jaringan bermasalah.', 'error'); }
     }
 
     // ===== Denah Meja =====
