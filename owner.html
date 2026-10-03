@@ -3,7 +3,7 @@
 <head>
   <script src="brand-config.js"></script>
   <script>window.__mykitchenOutletKey = 'mykitchen_owner_outlet_filter';</script>
-  <script src="api-supabase.js?v=20261003y"></script>
+  <script src="api-supabase.js?v=20261003z"></script>
   <!-- api-shim: ganti /api/* dgn localStorage (perbaikan persistensi utk hosting statis) -->
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
@@ -233,6 +233,10 @@
         <button onclick="openTransferModal()" class="inline-flex items-center gap-1.5 px-3 py-2 rounded-xl bg-sky-50 hover:bg-sky-100 text-sky-700 border border-sky-300 text-xs font-bold shadow-xs transition-colors">
           <i data-lucide="arrow-right-left" class="w-3.5 h-3.5 text-sky-600"></i>
           <span>Transfer Stok Antar Outlet</span>
+        </button>
+        <button onclick="openPrepModal()" class="inline-flex items-center gap-1.5 px-3 py-2 rounded-xl bg-orange-50 hover:bg-orange-100 text-orange-700 border border-orange-300 text-xs font-bold shadow-xs transition-colors">
+          <i data-lucide="cooking-pot" class="w-3.5 h-3.5 text-orange-600"></i>
+          <span>Batch Prep</span>
         </button>
         <button onclick="openPasarModal()" class="inline-flex items-center gap-1.5 px-3 py-2 rounded-xl bg-amber-50 hover:bg-amber-100 text-amber-700 border border-amber-300 text-xs font-bold shadow-xs transition-colors">
           <i data-lucide="shopping-basket" class="w-3.5 h-3.5 text-amber-600"></i>
@@ -947,6 +951,39 @@
         </div>
       </div>
 
+      <!-- Section 8: Batch Prep (Bumbu Dasar) -->
+      <div class="bg-white rounded-3xl border border-stone-200/80 shadow-xs overflow-hidden">
+        <div class="p-5 sm:p-6 border-b border-stone-100 flex flex-col md:flex-row md:items-center justify-between gap-4">
+          <div>
+            <h3 class="text-base font-extrabold text-[#450A0A] flex items-center gap-2">
+              <i data-lucide="cooking-pot" class="w-5 h-5 text-orange-600"></i>
+              <span>Batch Prep — Bumbu Dasar & Olahan</span>
+            </h3>
+            <p class="text-xs text-stone-500">Racik bahan mentah jadi bumbu dasar / bahan setengah jadi</p>
+          </div>
+          <button onclick="openPrepModal()" class="inline-flex items-center gap-1.5 px-3.5 py-2 rounded-xl bg-orange-600 hover:bg-orange-700 text-white text-xs font-bold shadow-xs transition-colors">
+            <i data-lucide="plus" class="w-3.5 h-3.5"></i>
+            <span>Produksi Baru</span>
+          </button>
+        </div>
+        <div class="overflow-x-auto max-h-[320px]">
+          <table class="w-full text-left text-xs">
+            <thead class="bg-stone-50 text-stone-500 uppercase tracking-wider text-[10px] font-bold border-b border-stone-200 sticky top-0">
+              <tr>
+                <th class="py-3 px-4 sm:px-6">Waktu</th>
+                <th class="py-3 px-4">Hasil</th>
+                <th class="py-3 px-4 text-right">Qty</th>
+                <th class="py-3 px-4">Bahan Dipakai</th>
+                <th class="py-3 px-4">Oleh</th>
+              </tr>
+            </thead>
+            <tbody id="prep-history-body" class="divide-y divide-stone-100">
+              <tr><td colspan="5" class="py-6 text-center text-stone-400">Memuat...</td></tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+
     </div>
     <!-- END VIEW 2: INVENTORY -->
 
@@ -970,6 +1007,74 @@
         </div>
         <div id="outlet-list" class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
           <p class="text-stone-400 italic text-xs">Memuat...</p>
+        </div>
+      </div>
+
+      <!-- Section: Kelola Denah Meja -->
+      <div class="bg-white rounded-3xl p-5 sm:p-6 border border-stone-200/80 shadow-xs">
+        <div class="flex items-center justify-between mb-4">
+          <div>
+            <h3 class="text-base font-extrabold text-[#450A0A] flex items-center gap-2">
+              <i data-lucide="armchair" class="w-5 h-5 text-brand"></i>
+              Kelola Denah Meja
+            </h3>
+            <p class="text-[11px] text-stone-400 mt-0.5">Area & nomor meja untuk outlet yang sedang dipilih.</p>
+          </div>
+          <div class="flex gap-2">
+            <button onclick="openTableAreaModal()" class="inline-flex items-center gap-1.5 px-3 py-2 rounded-xl bg-stone-100 hover:bg-stone-200 text-stone-700 text-xs font-bold border border-stone-300 transition-colors">
+              <i data-lucide="plus" class="w-3.5 h-3.5"></i><span>+ Area</span>
+            </button>
+            <button onclick="openTableModal()" class="inline-flex items-center gap-1.5 px-3.5 py-2 rounded-xl bg-brand hover:bg-brand-hover text-white text-xs font-bold shadow-xs transition-colors">
+              <i data-lucide="plus" class="w-3.5 h-3.5"></i><span>+ Meja</span>
+            </button>
+          </div>
+        </div>
+        <div id="table-manage-list" class="space-y-4">
+          <p class="text-stone-400 italic text-xs">Memuat...</p>
+        </div>
+      </div>
+
+      <!-- Modal Area Meja -->
+      <div id="tablearea-modal" class="hidden fixed inset-0 z-50 flex items-center justify-center p-4 bg-[#450A0A]/80 backdrop-blur-sm">
+        <div class="w-full max-w-sm bg-white rounded-3xl p-6 shadow-2xl border border-stone-200">
+          <div class="flex items-center justify-between pb-3 border-b border-stone-100">
+            <h4 class="text-sm font-extrabold text-[#450A0A]">Tambah Area Meja</h4>
+            <button onclick="document.getElementById('tablearea-modal').classList.add('hidden')" class="p-1 rounded-full text-stone-400 hover:text-stone-700"><i data-lucide="x" class="w-4 h-4"></i></button>
+          </div>
+          <form onsubmit="submitTableArea(event)" class="mt-4 space-y-3 text-xs">
+            <div>
+              <label class="block font-bold text-stone-700 mb-1">Nama Area *</label>
+              <input id="tarea-name" required maxlength="40" placeholder="mis. Indoor Lt 1" class="w-full px-3 py-2 rounded-xl border border-stone-300 text-xs focus:border-brand focus:outline-none">
+            </div>
+            <button class="w-full py-2.5 rounded-xl bg-brand hover:bg-brand-hover text-white text-xs font-extrabold">Simpan</button>
+          </form>
+        </div>
+      </div>
+
+      <!-- Modal Meja -->
+      <div id="table-modal" class="hidden fixed inset-0 z-50 flex items-center justify-center p-4 bg-[#450A0A]/80 backdrop-blur-sm">
+        <div class="w-full max-w-sm bg-white rounded-3xl p-6 shadow-2xl border border-stone-200">
+          <div class="flex items-center justify-between pb-3 border-b border-stone-100">
+            <h4 class="text-sm font-extrabold text-[#450A0A]">Tambah Meja</h4>
+            <button onclick="document.getElementById('table-modal').classList.add('hidden')" class="p-1 rounded-full text-stone-400 hover:text-stone-700"><i data-lucide="x" class="w-4 h-4"></i></button>
+          </div>
+          <form onsubmit="submitTable(event)" class="mt-4 space-y-3 text-xs">
+            <div>
+              <label class="block font-bold text-stone-700 mb-1">Area *</label>
+              <select id="tbl-area" required class="w-full px-3 py-2 rounded-xl border border-stone-300 text-xs focus:border-brand focus:outline-none bg-white"></select>
+            </div>
+            <div class="grid grid-cols-2 gap-3">
+              <div>
+                <label class="block font-bold text-stone-700 mb-1">Nomor Meja *</label>
+                <input id="tbl-number" required maxlength="10" placeholder="mis. 05" class="w-full px-3 py-2 rounded-xl border border-stone-300 text-xs focus:border-brand focus:outline-none">
+              </div>
+              <div>
+                <label class="block font-bold text-stone-700 mb-1">Kursi</label>
+                <input id="tbl-cap" type="number" min="1" value="4" class="w-full px-3 py-2 rounded-xl border border-stone-300 text-xs focus:border-brand focus:outline-none">
+              </div>
+            </div>
+            <button class="w-full py-2.5 rounded-xl bg-brand hover:bg-brand-hover text-white text-xs font-extrabold">Simpan</button>
+          </form>
         </div>
       </div>
 
@@ -2137,6 +2242,33 @@
             <p class="text-[11px] text-stone-400 mt-1">Layar dapur bisa difilter per stasiun (Grill / Fryer / Bar).</p>
           </div>
 
+          <div>
+            <label class="block font-bold text-stone-700 mb-1">Harga per Kanal <span class="text-[10px] font-normal text-stone-400">(opsional — kosongkan = ikut harga kasir)</span></label>
+            <div class="grid grid-cols-2 sm:grid-cols-3 gap-2">
+              <div>
+                <label class="text-[10px] text-stone-500">Dine-in</label>
+                <input type="number" id="price-ch-dine_in" min="0" step="500" placeholder="-" class="w-full px-2 py-1.5 rounded-lg border border-stone-300 text-xs font-mono focus:border-brand focus:outline-none">
+              </div>
+              <div>
+                <label class="text-[10px] text-stone-500">Takeaway</label>
+                <input type="number" id="price-ch-takeaway" min="0" step="500" placeholder="-" class="w-full px-2 py-1.5 rounded-lg border border-stone-300 text-xs font-mono focus:border-brand focus:outline-none">
+              </div>
+              <div>
+                <label class="text-[10px] text-stone-500">GoFood</label>
+                <input type="number" id="price-ch-gofood" min="0" step="500" placeholder="-" class="w-full px-2 py-1.5 rounded-lg border border-stone-300 text-xs font-mono focus:border-brand focus:outline-none">
+              </div>
+              <div>
+                <label class="text-[10px] text-stone-500">GrabFood</label>
+                <input type="number" id="price-ch-grabfood" min="0" step="500" placeholder="-" class="w-full px-2 py-1.5 rounded-lg border border-stone-300 text-xs font-mono focus:border-brand focus:outline-none">
+              </div>
+              <div>
+                <label class="text-[10px] text-stone-500">ShopeeFood</label>
+                <input type="number" id="price-ch-shopeefood" min="0" step="500" placeholder="-" class="w-full px-2 py-1.5 rounded-lg border border-stone-300 text-xs font-mono focus:border-brand focus:outline-none">
+              </div>
+            </div>
+            <p class="text-[11px] text-stone-400 mt-1">Harga khusus per kanal untuk outlet yang dipilih.</p>
+          </div>
+
           <div class="grid grid-cols-1 sm:grid-cols-2 gap-3">
             <div>
               <label class="block font-bold text-stone-700 mb-1">Harga Jual Kasir (Rp) <span class="text-rose-500">*</span></label>
@@ -2824,6 +2956,60 @@
           </div>
         </div>
 
+  <!-- Modal Batch Prep -->
+  <div id="prep-modal" class="hidden fixed inset-0 z-50 flex items-center justify-center p-4 bg-[#450A0A]/80 backdrop-blur-sm">
+    <div class="w-full max-w-lg bg-white rounded-3xl p-6 shadow-2xl border border-stone-200 max-h-[92vh] overflow-y-auto">
+      <div class="flex items-center justify-between pb-3 border-b border-stone-100">
+        <div class="flex items-center gap-2.5">
+          <div class="w-9 h-9 rounded-2xl bg-orange-100 text-orange-700 flex items-center justify-center">
+            <i data-lucide="cooking-pot" class="w-5 h-5"></i>
+          </div>
+          <div>
+            <h4 class="text-sm font-extrabold text-[#450A0A]">Produksi Batch Prep</h4>
+            <span class="text-[10px] text-stone-400">Bumbu dasar / bahan olahan</span>
+          </div>
+        </div>
+        <button onclick="closePrepModal()" class="p-1 rounded-full text-stone-400 hover:text-stone-700">
+          <i data-lucide="x" class="w-4 h-4"></i>
+        </button>
+      </div>
+      <form onsubmit="submitPrep(event)" class="mt-4 space-y-3.5 text-xs">
+        <div>
+          <label class="block font-bold text-stone-700 mb-1">Hasil Jadi</label>
+          <select id="prep-output" onchange="onPrepOutputChange()" class="w-full px-3 py-2 rounded-xl border border-stone-300 text-xs focus:border-brand focus:outline-none bg-white">
+            <option value="">-- Bahan hasil baru (isi nama di bawah) --</option>
+          </select>
+        </div>
+        <div id="prep-newname-wrap">
+          <label class="block font-bold text-stone-700 mb-1">Nama Hasil Baru *</label>
+          <input type="text" id="prep-newname" maxlength="80" placeholder="mis. Bumbu Dasar Merah" class="w-full px-3 py-2 rounded-xl border border-stone-300 text-xs focus:border-brand focus:outline-none">
+        </div>
+        <div class="grid grid-cols-2 gap-3">
+          <div>
+            <label class="block font-bold text-stone-700 mb-1">Jumlah Hasil *</label>
+            <input type="number" id="prep-qty" required min="0.0001" step="any" placeholder="0" class="w-full px-3 py-2 rounded-xl border border-stone-300 font-mono font-bold text-xs focus:border-brand focus:outline-none">
+          </div>
+          <div>
+            <label class="block font-bold text-stone-700 mb-1">Satuan</label>
+            <input type="text" id="prep-unit" maxlength="20" placeholder="kg" class="w-full px-3 py-2 rounded-xl border border-stone-300 text-xs focus:border-brand focus:outline-none">
+          </div>
+        </div>
+        <div>
+          <label class="block font-bold text-stone-700 mb-1">Bahan Mentah Dipakai *</label>
+          <div id="prep-materials" class="space-y-2"></div>
+          <button type="button" onclick="addPrepMaterialRow()" class="mt-2 inline-flex items-center gap-1 px-3 py-1.5 rounded-lg bg-stone-100 hover:bg-stone-200 text-stone-700 text-xs font-bold">
+            <i data-lucide="plus" class="w-3.5 h-3.5"></i> Tambah Bahan
+          </button>
+        </div>
+        <div>
+          <label class="block font-bold text-stone-700 mb-1">Catatan</label>
+          <input type="text" id="prep-note" maxlength="200" placeholder="mis. untuk stok 3 hari" class="w-full px-3 py-2 rounded-xl border border-stone-300 text-xs focus:border-brand focus:outline-none">
+        </div>
+        <button type="submit" class="w-full py-2.5 rounded-xl bg-orange-600 hover:bg-orange-700 text-white text-xs font-extrabold transition-colors">Simpan Produksi</button>
+      </form>
+    </div>
+  </div>
+
         <div class="space-y-1">
           <div class="flex justify-between font-bold">
             <span class="flex items-center gap-1.5"><i data-lucide="credit-card" class="w-3.5 h-3.5 text-purple-600"></i> Debit / Kartu EDC</span>
@@ -3321,6 +3507,7 @@
         viewStaff.classList.remove('hidden');
         topActions.classList.add('hidden');
         loadStaffData();
+        loadTableManage();
       } else if (view === 'accounting') {
         tabAcct.className = TAB_ACTIVE;
         viewAcct.classList.remove('hidden');
@@ -3345,8 +3532,104 @@
         loadIngredients();
         loadTransferHistory();
         loadPasarHistory();
+        loadPrepHistory();
       }
       lucide.createIcons();
+    }
+
+    // ===== Batch Prep =====
+    function openPrepModal() {
+      const sel = document.getElementById('prep-output');
+      const cur = getOwnerOutletId();
+      const list = (allIngredientsList || []).filter(i => !cur || cur === 'ALL' || (i.outletId || i.outlet_id) === cur);
+      sel.innerHTML = '<option value="">-- Bahan hasil baru (isi nama di bawah) --</option>' +
+        list.map(i => `<option value="${i.id}" data-unit="${escapeOwnerHtml(i.unit || '')}">${escapeOwnerHtml(i.name)}</option>`).join('');
+      document.getElementById('prep-newname').value = '';
+      document.getElementById('prep-qty').value = '';
+      document.getElementById('prep-unit').value = '';
+      document.getElementById('prep-note').value = '';
+      document.getElementById('prep-materials').innerHTML = '';
+      addPrepMaterialRow();
+      onPrepOutputChange();
+      document.getElementById('prep-modal').classList.remove('hidden');
+      lucide.createIcons();
+    }
+    function closePrepModal() { document.getElementById('prep-modal').classList.add('hidden'); }
+    function onPrepOutputChange() {
+      const v = document.getElementById('prep-output').value;
+      document.getElementById('prep-newname-wrap').style.display = v ? 'none' : '';
+      if (v) {
+        const opt = document.getElementById('prep-output').selectedOptions[0];
+        document.getElementById('prep-unit').value = opt ? (opt.dataset.unit || '') : '';
+      }
+    }
+    function addPrepMaterialRow() {
+      const cur = getOwnerOutletId();
+      const list = (allIngredientsList || []).filter(i => !cur || cur === 'ALL' || (i.outletId || i.outlet_id) === cur);
+      const div = document.createElement('div');
+      div.className = 'flex gap-2 items-center prep-mat-row';
+      div.innerHTML = `
+        <select class="prep-mat-id flex-1 px-2 py-1.5 rounded-lg border border-stone-300 text-xs focus:border-brand focus:outline-none bg-white">
+          ${list.map(i => `<option value="${i.id}">${escapeOwnerHtml(i.name)} (${i.currentStock ?? i.current_stock} ${escapeOwnerHtml(i.unit || '')})</option>`).join('')}
+        </select>
+        <input type="number" class="prep-mat-qty w-20 px-2 py-1.5 rounded-lg border border-stone-300 text-xs font-mono focus:border-brand focus:outline-none" min="0.0001" step="any" placeholder="Qty">
+        <button type="button" onclick="this.parentElement.remove()" class="p-1.5 rounded-lg text-stone-400 hover:text-red-600">×</button>`;
+      document.getElementById('prep-materials').appendChild(div);
+    }
+    async function submitPrep(e) {
+      e.preventDefault();
+      const outId = document.getElementById('prep-output').value;
+      const newName = document.getElementById('prep-newname').value.trim();
+      if (!outId && !newName) { toast('Pilih hasil atau isi nama baru.', 'warn'); return; }
+      const mats = [];
+      document.querySelectorAll('.prep-mat-row').forEach(r => {
+        const id = r.querySelector('.prep-mat-id').value;
+        const qty = parseFloat(r.querySelector('.prep-mat-qty').value) || 0;
+        if (id && qty > 0) mats.push({ ingredient_id: id, qty });
+      });
+      if (!mats.length) { toast('Isi minimal 1 bahan mentah.', 'warn'); return; }
+      const cur = getOwnerOutletId();
+      try {
+        const res = await fetch('/api/owner/prep-batch', {
+          method: 'POST', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            outlet_id: (cur && cur !== 'ALL') ? cur : undefined,
+            output_ingredient_id: outId || undefined,
+            output_name: newName || undefined,
+            output_qty: parseFloat(document.getElementById('prep-qty').value) || 0,
+            output_unit: document.getElementById('prep-unit').value.trim(),
+            materials: mats,
+            note: document.getElementById('prep-note').value.trim()
+          })
+        });
+        const d = await res.json();
+        if (d.success) {
+          toast('Batch prep tersimpan.', 'ok');
+          closePrepModal();
+          loadPrepHistory(); loadIngredientsData();
+        } else toast(d.message || 'Gagal.', 'error');
+      } catch (err) { toast('Jaringan bermasalah.', 'error'); }
+    }
+    async function loadPrepHistory() {
+      const tb = document.getElementById('prep-history-body');
+      if (!tb) return;
+      try {
+        let q = '';
+        const cur = getOwnerOutletId();
+        if (cur && cur !== 'ALL') q = '?outlet_id=' + encodeURIComponent(cur);
+        const res = await fetch('/api/owner/prep-batches' + q);
+        const d = await res.json();
+        const list = (d.success && d.batches) || [];
+        tb.innerHTML = list.length ? list.map(p => `
+          <tr class="hover:bg-stone-50">
+            <td class="py-2.5 px-4 sm:px-6 whitespace-nowrap">${fmtShiftDate(p.createdAt)}</td>
+            <td class="py-2.5 px-4 font-bold text-[#450A0A]">${escapeOwnerHtml(p.outputName)}</td>
+            <td class="py-2.5 px-4 text-right font-mono font-bold">${p.outputQty} ${escapeOwnerHtml(p.outputUnit)}</td>
+            <td class="py-2.5 px-4 text-stone-500">${(p.materials || []).map(m => escapeOwnerHtml(m.name) + ' ' + m.qty + ' ' + escapeOwnerHtml(m.unit)).join(', ')}</td>
+            <td class="py-2.5 px-4">${escapeOwnerHtml(p.createdBy)}</td>
+          </tr>`).join('')
+          : '<tr><td colspan="5" class="py-6 text-center text-stone-400">Belum ada batch prep.</td></tr>';
+      } catch (e) { tb.innerHTML = '<tr><td colspan="5" class="py-6 text-center text-stone-400">Gagal memuat.</td></tr>'; }
     }
 
     // ===== Dashboard HQ =====
@@ -3671,6 +3954,160 @@
           </div>
         </div>`).join('');
       lucide.createIcons();
+    }
+    // ===== Harga per Kanal =====
+    async function loadChannelPriceInputs(menuId) {
+      ['dine_in','takeaway','gofood','grabfood','shopeefood'].forEach(c => {
+        const el = document.getElementById('price-ch-' + c);
+        if (el) el.value = '';
+      });
+      const oid = getTableOutletId();
+      if (!oid || !menuId) return;
+      try {
+        const res = await fetch('/api/menu/channel-prices?outlet_id=' + encodeURIComponent(oid));
+        const d = await res.json();
+        const pm = (d.success && d.prices && d.prices[menuId]) || {};
+        Object.keys(pm).forEach(c => {
+          const el = document.getElementById('price-ch-' + c);
+          if (el) el.value = pm[c];
+        });
+      } catch (e) {}
+    }
+    async function saveChannelPrices(menuId) {
+      const oid = getTableOutletId();
+      if (!oid || !menuId) return;
+      const channels = ['dine_in','takeaway','gofood','grabfood','shopeefood'];
+      for (const c of channels) {
+        const el = document.getElementById('price-ch-' + c);
+        const v = el ? parseInt(el.value) : 0;
+        if (v > 0) {
+          try {
+            await fetch('/api/owner/menu-prices', {
+              method: 'POST', headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ menu_id: menuId, outlet_id: oid, channel: c, price: v })
+            });
+          } catch (e) {}
+        }
+      }
+    }
+
+    // ===== Kelola Denah Meja =====
+    let tableManageCache = null;
+    function getTableOutletId() {
+      const cur = getOwnerOutletId();
+      if (cur && cur !== 'ALL' && cur.indexOf(',') < 0) return cur;
+      const role = getPortalRole();
+      if (role === 'store_manager' && portalSession && portalSession.outletIds) {
+        return (portalSession.outletIds || []).filter(x => x !== '*')[0] || null;
+      }
+      return null;
+    }
+    async function loadTableManage() {
+      const box = document.getElementById('table-manage-list');
+      if (!box) return;
+      const oid = getTableOutletId();
+      if (!oid) { box.innerHTML = '<p class="text-stone-400 italic text-xs">Pilih satu outlet di atas untuk kelola meja.</p>'; return; }
+      try {
+        const res = await fetch('/api/tables?outlet_id=' + encodeURIComponent(oid));
+        const data = await res.json();
+        if (!data.success) {
+          box.innerHTML = '<p class="text-stone-400 italic text-xs">' + (data.needSql ? 'Jalankan SQL denah meja dulu.' : 'Gagal memuat.') + '</p>';
+          return;
+        }
+        tableManageCache = data;
+        if (!data.areas.length && !data.tables.length) {
+          box.innerHTML = '<p class="text-stone-400 italic text-xs">Belum ada area/meja. Tambahkan area dulu, lalu meja.</p>';
+          return;
+        }
+        box.innerHTML = data.areas.map(a => {
+          const ts = data.tables.filter(t => t.areaId === a.id);
+          return `
+          <div class="rounded-2xl border border-stone-200 p-4">
+            <div class="flex items-center justify-between mb-2">
+              <h4 class="font-extrabold text-sm text-[#450A0A]">${escapeOwnerHtml(a.name)} <span class="text-[10px] font-normal text-stone-400">(${ts.length} meja)</span></h4>
+              <button onclick="deleteTableArea('${a.id}')" class="p-1.5 rounded-lg bg-stone-100 hover:bg-red-100 text-stone-500 hover:text-red-600" title="Hapus area"><i data-lucide="trash-2" class="w-3.5 h-3.5"></i></button>
+            </div>
+            ${ts.length ? `<div class="flex flex-wrap gap-2">` + ts.map(t => `
+              <span class="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-stone-100 border border-stone-200 text-xs font-bold">
+                Meja ${escapeOwnerHtml(t.number)} <span class="text-stone-400 font-normal">(${t.capacity})</span>
+                <button onclick="deleteTable('${t.id}')" class="text-stone-400 hover:text-red-600" title="Hapus meja">×</button>
+              </span>`).join('') + `</div>` : '<p class="text-[11px] text-stone-400 italic">Belum ada meja di area ini.</p>'}
+          </div>`;
+        }).join('');
+        lucide.createIcons();
+      } catch (e) { box.innerHTML = '<p class="text-stone-400 italic text-xs">Gagal memuat.</p>'; }
+    }
+    function openTableAreaModal() {
+      if (!getTableOutletId()) { toast('Pilih satu outlet dulu.', 'warn'); return; }
+      document.getElementById('tarea-name').value = '';
+      document.getElementById('tablearea-modal').classList.remove('hidden');
+    }
+    async function submitTableArea(e) {
+      e.preventDefault();
+      const oid = getTableOutletId();
+      try {
+        const res = await fetch('/api/owner/table-areas', {
+          method: 'POST', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ action: 'create', outlet_id: oid, name: document.getElementById('tarea-name').value.trim() })
+        });
+        const d = await res.json();
+        if (d.success) {
+          document.getElementById('tablearea-modal').classList.add('hidden');
+          toast('Area ditambahkan.', 'ok'); loadTableManage();
+        } else toast(d.message || 'Gagal.', 'error');
+      } catch (e) { toast('Jaringan bermasalah.', 'error'); }
+    }
+    async function deleteTableArea(id) {
+      if (!confirm('Hapus area ini? Semua meja di dalamnya ikut terhapus.')) return;
+      try {
+        const res = await fetch('/api/owner/table-areas', {
+          method: 'POST', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ action: 'delete', id, outlet_id: getTableOutletId() })
+        });
+        const d = await res.json();
+        if (d.success) { toast('Area dihapus.', 'ok'); loadTableManage(); }
+        else toast(d.message || 'Gagal.', 'error');
+      } catch (e) { toast('Jaringan bermasalah.', 'error'); }
+    }
+    function openTableModal() {
+      const oid = getTableOutletId();
+      if (!oid) { toast('Pilih satu outlet dulu.', 'warn'); return; }
+      const areas = (tableManageCache && tableManageCache.areas) || [];
+      if (!areas.length) { toast('Buat area dulu.', 'warn'); return; }
+      document.getElementById('tbl-area').innerHTML = areas.map(a => `<option value="${a.id}">${escapeOwnerHtml(a.name)}</option>`).join('');
+      document.getElementById('tbl-number').value = '';
+      document.getElementById('table-modal').classList.remove('hidden');
+    }
+    async function submitTable(e) {
+      e.preventDefault();
+      try {
+        const res = await fetch('/api/owner/tables', {
+          method: 'POST', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            action: 'create', outlet_id: getTableOutletId(),
+            area_id: document.getElementById('tbl-area').value,
+            table_number: document.getElementById('tbl-number').value.trim(),
+            capacity: parseInt(document.getElementById('tbl-cap').value) || 4
+          })
+        });
+        const d = await res.json();
+        if (d.success) {
+          document.getElementById('table-modal').classList.add('hidden');
+          toast('Meja ditambahkan.', 'ok'); loadTableManage();
+        } else toast(d.message || 'Gagal.', 'error');
+      } catch (e) { toast('Jaringan bermasalah.', 'error'); }
+    }
+    async function deleteTable(id) {
+      if (!confirm('Hapus meja ini?')) return;
+      try {
+        const res = await fetch('/api/owner/tables', {
+          method: 'POST', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ action: 'delete', id })
+        });
+        const d = await res.json();
+        if (d.success) { toast('Meja dihapus.', 'ok'); loadTableManage(); }
+        else toast(d.message || 'Gagal.', 'error');
+      } catch (e) { toast('Jaringan bermasalah.', 'error'); }
     }
     function openOutletModal(id) {
       const o = id ? ownerOutlets.find(x => x.id === id) : null;
@@ -5417,6 +5854,10 @@
       document.getElementById('recipe-modal-img-input').value = '';
       renderMenuScopeOptions(getOwnerOutletId() && getOwnerOutletId() !== 'ALL' ? getOwnerOutletId().split(',')[0] : 'CENTRAL');
       document.getElementById('recipe-modal-station-input').value = '';
+      ['dine_in','takeaway','gofood','grabfood','shopeefood'].forEach(c => {
+        const el = document.getElementById('price-ch-' + c);
+        if (el) el.value = '';
+      });
 
       const imgEl = document.getElementById('recipe-modal-menu-img');
       if (imgEl) imgEl.src = BRAND.logo;
@@ -5476,6 +5917,7 @@
       document.getElementById('recipe-modal-menu-id').value = menuId;
       renderMenuScopeOptions(menu.isCentral ? 'CENTRAL' : (menu.outletId || 'CENTRAL'));
       document.getElementById('recipe-modal-station-input').value = menu.station || '';
+      loadChannelPriceInputs(menuId);
       document.getElementById('recipe-modal-title').textContent = 'Edit Menu & Racik Resep';
       const badge = document.getElementById('recipe-modal-mode-badge');
       if (badge) {
@@ -5694,6 +6136,8 @@
         });
         const data = await res.json();
         if (data.success) {
+          const savedId = data.menu ? data.menu.id : menuId;
+          await saveChannelPrices(savedId);
           closeRecipeModal();
           await loadIngredients();
           if (typeof loadAnalytics === 'function') {
