@@ -2,7 +2,8 @@
 <html lang="id">
 <head>
   <script src="brand-config.js"></script>
-  <script src="api-supabase.js?v=20261003i"></script>
+  <script>window.__mykitchenOutletKey = 'mykitchen_owner_outlet_filter';</script>
+  <script src="api-supabase.js?v=20261003j"></script>
   <!-- api-shim: ganti /api/* dgn localStorage (perbaikan persistensi utk hosting statis) -->
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
@@ -3127,12 +3128,12 @@
     // --- Kelola Outlet (multi-outlet) ---
     let ownerOutlets = [];
     function getOwnerOutletId() {
-      try { return localStorage.getItem('mykitchen_outlet_id') || 'ALL'; } catch (e) { return 'ALL'; }
+      try { return localStorage.getItem('mykitchen_owner_outlet_filter') || 'ALL'; } catch (e) { return 'ALL'; }
     }
     function setOwnerOutletId(id) {
       try {
-        if (!id || id === 'ALL') localStorage.removeItem('mykitchen_outlet_id');
-        else localStorage.setItem('mykitchen_outlet_id', id);
+        if (!id || id === 'ALL') localStorage.removeItem('mykitchen_owner_outlet_filter');
+        else localStorage.setItem('mykitchen_owner_outlet_filter', id);
       } catch (e) {}
     }
     async function loadOutlets() {
