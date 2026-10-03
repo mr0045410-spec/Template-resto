@@ -1815,9 +1815,19 @@
     }).catch(serverError);
   };
 
-  // 25. GET /api/shift/current — shift yg sedang terbuka (atau null)
-  routes['GET /api/shift/current'] = function () {
-    return sel('shifts', 'select=*&status=eq.open&order=opened_at.desc&limit=1').then(function (rows) {
+  // 25. GET /api/shift/current — shift yg sedang terbuka (atau null).
+  //     ?outlet_id=xxx -> hanya shift outlet itu (wajib utk multi-outlet agar
+  //     perangkat outlet B tidak nyangkut ke shift outlet A).
+  routes['GET /api/shift/current'] = function (body, query) {
+    var oid = query && query.outlet_id;
+    var q = 'select=*&status=eq.open&order=opened_at.desc&limit=1';
+    var p = oid
+      ? outletReady().then(function (ready) {
+          if (ready) q += '&outlet_id=eq.' + encodeURIComponent(oid);
+          return sel('shifts', q, { allOutlets: true });
+        })
+      : sel('shifts', q);
+    return p.then(function (rows) {
       return ok({ success: true, shift: rows.length ? rowToShift(rows[0]) : null });
     }).catch(serverError);
   };
