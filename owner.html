@@ -2,7 +2,7 @@
 <html lang="id">
 <head>
   <script src="brand-config.js"></script>
-  <script src="api-supabase.js?v=20261003f"></script>
+  <script src="api-supabase.js?v=20261003g"></script>
   <!-- api-shim: ganti /api/* dgn localStorage (perbaikan persistensi utk hosting statis) -->
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
@@ -478,6 +478,43 @@
             </tr>
           </thead>
           <tbody id="void-report-table-body" class="divide-y divide-stone-100">
+            <tr><td colspan="6" class="py-8 text-center text-stone-400">Memuat...</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+
+    <!-- Section 6b: Laporan Refund -->
+    <div class="bg-white rounded-3xl border border-stone-200/80 shadow-xs overflow-hidden">
+      <div class="p-5 sm:p-6 border-b border-stone-100 flex items-center justify-between">
+        <div>
+          <h3 class="text-base font-extrabold text-[#450A0A]">Laporan Refund</h3>
+          <p class="text-xs text-stone-500">Uang dikembalikan tanpa batalkan order</p>
+        </div>
+        <div class="flex items-center gap-3">
+          <div class="text-right">
+            <div class="text-[10px] font-bold uppercase tracking-wider text-stone-400">Total Refund</div>
+            <div id="refund-summary" class="text-sm font-black text-amber-600 font-mono">Rp 0</div>
+          </div>
+          <button onclick="loadRefundReport()" class="p-2 rounded-xl bg-stone-100 hover:bg-stone-200 text-stone-600" title="Muat ulang laporan refund">
+            <i data-lucide="refresh-cw" class="w-4 h-4"></i>
+          </button>
+        </div>
+      </div>
+
+      <div class="overflow-x-auto">
+        <table class="w-full text-left text-xs">
+          <thead class="bg-stone-50 text-stone-500 uppercase tracking-wider text-[10px] font-bold border-b border-stone-200">
+            <tr>
+              <th class="py-3 px-4 sm:px-6">Waktu Refund</th>
+              <th class="py-3 px-4">No. Struk</th>
+              <th class="py-3 px-4">Meja</th>
+              <th class="py-3 px-4 text-right">Nominal</th>
+              <th class="py-3 px-4">Alasan</th>
+              <th class="py-3 px-4">Oleh</th>
+            </tr>
+          </thead>
+          <tbody id="refund-report-table-body" class="divide-y divide-stone-100">
             <tr><td colspan="6" class="py-8 text-center text-stone-400">Memuat...</td></tr>
           </tbody>
         </table>
@@ -1490,6 +1527,46 @@
     </div>
   </div>
 
+  <!-- MODAL: Refund Order (kembalikan uang TANPA batalkan order) -->
+  <div id="refund-modal" class="hidden fixed inset-0 z-50 flex items-center justify-center p-4 bg-[#450A0A]/80 backdrop-blur-sm">
+    <div class="w-full max-w-sm bg-white rounded-3xl p-6 shadow-2xl border border-stone-200">
+      <div class="flex items-center justify-between pb-3 border-b border-stone-100">
+        <h4 class="text-sm font-extrabold text-amber-700 flex items-center gap-2">
+          <i data-lucide="undo-2" class="w-4 h-4"></i>Refund Order
+        </h4>
+        <button onclick="closeRefundModal()" class="p-1 rounded-full text-stone-400 hover:text-stone-700">
+          <i data-lucide="x" class="w-4 h-4"></i>
+        </button>
+      </div>
+      <div class="mt-4 space-y-3.5 text-xs">
+        <div class="bg-amber-50 border border-amber-200 rounded-2xl p-3 text-amber-800">
+          <p class="font-bold font-mono" id="refund-order-id">-</p>
+          <p>Total order: <span class="font-mono font-bold" id="refund-order-total">Rp 0</span></p>
+          <p class="text-[10px] mt-1 text-amber-600">Order TETAP tercatat sebagai penjualan. Stok tidak dikembalikan. Kas keluar dicatat di jurnal.</p>
+        </div>
+        <div>
+          <label class="text-xs font-bold text-stone-600 mb-1.5 block">Nominal Refund (Rp) *</label>
+          <input id="refund-amount" type="number" min="500" step="500" placeholder="10000" class="w-full px-3 py-2.5 rounded-2xl border border-stone-300 text-sm font-mono font-bold focus:outline-none focus:border-amber-400" />
+          <p class="text-[10px] text-stone-400 mt-1">Boleh sebagian (parsial). Maksimal = total order.</p>
+        </div>
+        <div>
+          <label class="text-xs font-bold text-stone-600 mb-1.5 block">Alasan Refund *</label>
+          <input id="refund-reason" type="text" maxlength="200" placeholder="cth: salah pencet 2 porsi, komplain pelanggan" class="w-full px-3 py-2.5 rounded-2xl border border-stone-300 text-sm focus:outline-none focus:border-amber-400" />
+        </div>
+        <div>
+          <label class="text-xs font-bold text-stone-600 mb-1.5 block">PIN Owner *</label>
+          <input id="refund-pin" type="password" maxlength="6" inputmode="numeric" placeholder="PIN owner" class="w-full px-3 py-2.5 rounded-2xl border border-stone-300 text-sm font-mono focus:outline-none focus:border-amber-400" />
+        </div>
+        <div id="refund-confirm-warn" class="hidden bg-amber-50 border border-amber-300 rounded-2xl p-3 text-amber-800 text-[11px] leading-relaxed"></div>
+        <div id="refund-error" class="hidden bg-rose-50 border border-rose-300 rounded-2xl p-3 text-rose-700 text-[11px] leading-relaxed font-bold"></div>
+        <div class="flex gap-2 pt-1">
+          <button type="button" onclick="closeRefundModal()" class="flex-1 px-4 py-2.5 rounded-2xl bg-stone-100 hover:bg-stone-200 text-stone-700 text-sm font-bold transition-colors">Batal</button>
+          <button type="button" id="refund-submit-btn" onclick="submitRefundOrder()" class="flex-1 px-4 py-2.5 rounded-2xl bg-amber-600 hover:bg-amber-700 text-white text-sm font-bold transition-colors">Refund Sekarang</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
   <!-- MODAL: Struk Void -->
   <div id="void-receipt-modal" class="hidden fixed inset-0 z-50 flex items-center justify-center p-4 bg-[#450A0A]/80 backdrop-blur-sm">
     <div class="w-full max-w-sm bg-white rounded-3xl p-6 shadow-2xl border border-stone-200 max-h-[90vh] overflow-y-auto">
@@ -2040,6 +2117,7 @@
           renderInsightCard(analyticsData);
           renderRecentOrders(analyticsData.recentOrders);
           loadVoidReport();
+          loadRefundReport();
         }
       } catch (err) {
         console.error('Error loading analytics:', err);
@@ -2348,6 +2426,7 @@
             <td class="py-3 px-4 text-right font-mono font-black text-brand">${formatRupiah(o.total)}</td>
             <td class="py-3 px-4 text-center whitespace-nowrap">
               ${canVoid ? `<button onclick="openVoidModal('${o.id}', ${o.total})" class="px-2.5 py-1 rounded-lg bg-rose-50 hover:bg-rose-100 text-rose-700 border border-rose-200 text-[10px] font-bold transition-colors" title="Void / batalkan order ini">Void</button>` : ''}
+              ${canVoid ? `<button onclick="openRefundModal('${o.id}', ${o.total})" class="px-2.5 py-1 rounded-lg bg-amber-50 hover:bg-amber-100 text-amber-700 border border-amber-200 text-[10px] font-bold transition-colors" title="Refund / kembalikan uang tanpa batalkan order">Refund</button>` : ''}
               ${isVoided ? `<button onclick="viewVoidReceipt('${o.id}')" class="px-2.5 py-1 rounded-lg bg-stone-100 hover:bg-stone-200 text-stone-600 border border-stone-200 text-[10px] font-bold transition-colors" title="Lihat struk void">Struk</button>` : ''}
             </td>
           </tr>
@@ -2392,6 +2471,38 @@
       } catch (err) {
         console.error('Error loading void report:', err);
         body.innerHTML = `<tr><td colspan="6" class="py-8 text-center text-stone-400">Gagal memuat laporan void.</td></tr>`;
+      }
+    }
+
+    // --- Laporan Refund: daftar pengembalian uang + nominal + alasan ---
+    async function loadRefundReport() {
+      const body = document.getElementById('refund-report-table-body');
+      const summary = document.getElementById('refund-summary');
+      if (!body) return;
+      try {
+        const res = await fetch('/api/owner/refund-logs');
+        const data = await res.json();
+        const refunds = (data.success && data.refunds) || [];
+        if (!refunds.length) {
+          body.innerHTML = `<tr><td colspan="6" class="py-8 text-center text-stone-400">Belum ada refund. Bagus — pertahankan!</td></tr>`;
+          if (summary) summary.textContent = 'Rp 0';
+          return;
+        }
+        const total = refunds.reduce((s, r) => s + (Number(r.amount) || 0), 0);
+        if (summary) summary.textContent = formatRupiah(total) + ` (${refunds.length}x)`;
+        body.innerHTML = refunds.map(r => `
+          <tr class="hover:bg-stone-50 transition-colors">
+            <td class="py-3 px-4 sm:px-6 whitespace-nowrap text-stone-500">${fmtVoidDate(r.refundedAt)}</td>
+            <td class="py-3 px-4 font-mono font-bold text-[#450A0A]">${r.orderId}</td>
+            <td class="py-3 px-4 text-stone-500">${r.tableOrCustomer || '-'}</td>
+            <td class="py-3 px-4 text-right font-mono font-bold text-amber-600">${formatRupiah(r.amount)}</td>
+            <td class="py-3 px-4 max-w-[240px] truncate text-stone-700" title="${r.reason}">${r.reason}</td>
+            <td class="py-3 px-4 text-stone-500">${r.refundedBy}</td>
+          </tr>
+        `).join('');
+      } catch (err) {
+        console.error('Error loading refund report:', err);
+        body.innerHTML = `<tr><td colspan="6" class="py-8 text-center text-stone-400">Gagal memuat laporan refund.</td></tr>`;
       }
     }
 
@@ -2462,6 +2573,81 @@
       } catch (err) {
         disarmVoid();
         showVoidError('Void gagal: ' + err.message);
+      }
+    }
+
+    // --- Refund order: modal (nominal + alasan + PIN owner) ---
+    // Konfirmasi 2 langkah di dalam modal, pola sama seperti void.
+    let refundTarget = null;
+    let refundArmed = false;
+    let refundArmTimer = null;
+    function openRefundModal(orderId, total) {
+      refundTarget = { id: orderId, total };
+      disarmRefund();
+      document.getElementById('refund-order-id').textContent = orderId;
+      document.getElementById('refund-order-total').textContent = formatRupiah(total);
+      const amt = document.getElementById('refund-amount');
+      amt.value = total;
+      amt.max = total;
+      document.getElementById('refund-reason').value = '';
+      document.getElementById('refund-pin').value = '';
+      document.getElementById('refund-modal').classList.remove('hidden');
+      lucide.createIcons();
+    }
+    function closeRefundModal() {
+      document.getElementById('refund-modal').classList.add('hidden');
+      refundTarget = null;
+      disarmRefund();
+    }
+    function disarmRefund() {
+      refundArmed = false;
+      if (refundArmTimer) { clearTimeout(refundArmTimer); refundArmTimer = null; }
+      const btn = document.getElementById('refund-submit-btn');
+      const warn = document.getElementById('refund-confirm-warn');
+      const errBox = document.getElementById('refund-error');
+      if (btn) { btn.textContent = 'Refund Sekarang'; btn.classList.remove('bg-amber-800', 'hover:bg-amber-900'); btn.classList.add('bg-amber-600', 'hover:bg-amber-700'); }
+      if (warn) warn.classList.add('hidden');
+      if (errBox) errBox.classList.add('hidden');
+    }
+    function showRefundError(msg) {
+      const errBox = document.getElementById('refund-error');
+      if (errBox) { errBox.textContent = msg; errBox.classList.remove('hidden'); }
+    }
+    async function submitRefundOrder() {
+      if (!refundTarget) return;
+      const amount = Math.round(Number(document.getElementById('refund-amount').value) || 0);
+      const reason = document.getElementById('refund-reason').value.trim();
+      const pin = document.getElementById('refund-pin').value.trim();
+      if (!(amount > 0)) { showRefundError('Nominal refund harus lebih dari Rp 0.'); return; }
+      if (amount > refundTarget.total) { showRefundError('Nominal refund tidak boleh melebihi total order (' + formatRupiah(refundTarget.total) + ').'); return; }
+      if (!reason) { showRefundError('Alasan refund wajib diisi.'); return; }
+      if (!pin) { showRefundError('PIN owner wajib diisi.'); return; }
+      if (!refundArmed) {
+        refundArmed = true;
+        const warn = document.getElementById('refund-confirm-warn');
+        if (warn) {
+          warn.innerHTML = `Yakin refund <strong class="font-mono">${escapeOwnerHtml(refundTarget.id)}</strong> sebesar <strong class="font-mono">${formatRupiah(amount)}</strong>? Order tetap tercatat, kas keluar ${formatRupiah(amount)}.<br>Alasan: ${escapeOwnerHtml(reason)}`;
+          warn.classList.remove('hidden');
+        }
+        const btn = document.getElementById('refund-submit-btn');
+        if (btn) { btn.textContent = '⚠️ Klik lagi untuk konfirmasi'; btn.classList.remove('bg-amber-600', 'hover:bg-amber-700'); btn.classList.add('bg-amber-800', 'hover:bg-amber-900'); }
+        refundArmTimer = setTimeout(disarmRefund, 15000);
+        return;
+      }
+      if (refundArmTimer) { clearTimeout(refundArmTimer); refundArmTimer = null; }
+      try {
+        const res = await fetch('/api/orders/refund', {
+          method: 'POST', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ order_id: refundTarget.id, owner_pin: pin, amount, reason, refunded_by: 'Owner' })
+        });
+        const data = await res.json();
+        if (!res.ok || data.success !== true) throw new Error(data.message || 'Gagal refund');
+        closeRefundModal();
+        toast('Refund ' + formatRupiah(amount) + ' berhasil dicatat.', 'success');
+        loadAnalytics(); // refresh tabel riwayat + laporan
+      } catch (err) {
+        disarmRefund();
+        showRefundError('Refund gagal: ' + err.message);
       }
     }
 
