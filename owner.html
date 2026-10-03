@@ -3,7 +3,7 @@
 <head>
   <script src="brand-config.js"></script>
   <script>window.__mykitchenOutletKey = 'mykitchen_owner_outlet_filter';</script>
-  <script src="api-supabase.js?v=20261003q"></script>
+  <script src="api-supabase.js?v=20261003r"></script>
   <!-- api-shim: ganti /api/* dgn localStorage (perbaikan persistensi utk hosting statis) -->
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
@@ -2123,10 +2123,29 @@
         </div>
         <div>
           <label class="text-xs font-bold text-stone-600 mb-1.5 block">Role</label>
-          <select id="employee-role" class="w-full px-3.5 py-2.5 rounded-xl border border-stone-300 focus:border-brand focus:outline-none text-sm bg-white">
+          <select id="employee-role" onchange="renderAssignOutlets(this.value, staffEmployees.find(e => e.id === document.getElementById('employee-id').value) || null)" class="w-full px-3.5 py-2.5 rounded-xl border border-stone-300 focus:border-brand focus:outline-none text-sm bg-white">
             <option value="kasir">Kasir</option>
-            <option value="owner">Owner</option>
+            <option value="store_manager">Store Manager</option>
+            <option value="area_manager">Area Manager</option>
           </select>
+        </div>
+        <div id="employee-outlet-wrap">
+          <label class="text-xs font-bold text-stone-600 mb-1.5 block">Outlet</label>
+          <select id="employee-outlet" class="w-full px-3.5 py-2.5 rounded-xl border border-stone-300 focus:border-brand focus:outline-none text-sm bg-white"></select>
+        </div>
+        <div>
+          <label class="text-xs font-bold text-stone-600 mb-1.5 block">Username (login portal)</label>
+          <input type="text" id="employee-username" placeholder="Cth: rina.mgr" autocomplete="off" class="w-full px-3.5 py-2.5 rounded-xl border border-stone-300 focus:border-brand focus:outline-none text-sm">
+          <p class="text-[11px] text-stone-400 mt-1">Wajib untuk Store Manager & Area Manager. Kasir tidak perlu (ditolak masuk portal).</p>
+        </div>
+        <div>
+          <label class="text-xs font-bold text-stone-600 mb-1.5 block">Password (login portal)</label>
+          <input type="password" id="employee-password" placeholder="••••••" autocomplete="new-password" class="w-full px-3.5 py-2.5 rounded-xl border border-stone-300 focus:border-brand focus:outline-none text-sm">
+          <p class="text-[11px] text-stone-400 mt-1">Wajib diisi untuk akun ber-username baru. Kosongkan jika tidak mau mengubah.</p>
+        </div>
+        <div id="employee-assign-outlets-wrap" class="hidden">
+          <label class="text-xs font-bold text-stone-600 mb-1.5 block">Outlet yang dikelola (Area Manager)</label>
+          <div id="employee-assign-outlets" class="space-y-1.5 max-h-32 overflow-y-auto rounded-xl border border-stone-200 p-2.5"></div>
         </div>
         <p id="employee-form-error" class="hidden text-xs text-red-600 font-semibold bg-red-50 border border-red-200 rounded-xl px-3 py-2"></p>
         <div class="pt-2 flex gap-2">
@@ -3093,13 +3112,21 @@
         tbody.innerHTML = '<tr><td colspan="4" class="py-6 text-center text-stone-400">Belum ada pegawai. Klik "Tambah Pegawai".</td></tr>';
         return;
       }
-      tbody.innerHTML = staffEmployees.map(e => `
+      tbody.innerHTML = staffEmployees.map(e => {
+        const badgeColor = e.role === 'owner' ? 'bg-purple-100 text-purple-700'
+          : e.role === 'area_manager' ? 'bg-amber-100 text-amber-800'
+          : e.role === 'store_manager' ? 'bg-teal-100 text-teal-700'
+          : 'bg-blue-100 text-blue-700';
+        const sub = [e.username ? '@' + escapeOwnerHtml(e.username) : '', e.role === 'area_manager' ? 'Multi-outlet' : escapeOwnerHtml(outletNameById(e.outletId))]
+          .filter(Boolean).join(' • ');
+        return `
         <tr class="border-b border-stone-50 hover:bg-stone-50/60 transition-colors">
           <td class="py-2.5 pr-3">
             <p class="font-bold text-[#450A0A]">${escapeOwnerHtml(e.name)}</p>
+            ${sub ? `<p class="text-[10px] text-stone-400">${sub}</p>` : ''}
           </td>
           <td class="py-2.5 pr-3">
-            <span class="px-2 py-0.5 rounded-full text-[10px] font-black ${e.role === 'owner' ? 'bg-purple-100 text-purple-700' : 'bg-blue-100 text-blue-700'}">${e.role === 'owner' ? 'OWNER' : 'KASIR'}</span>
+            <span class="px-2 py-0.5 rounded-full text-[10px] font-black ${badgeColor}">${EMP_ROLE_LABEL[e.role] || 'KASIR'}</span>
           </td>
           <td class="py-2.5 pr-3">
             <button onclick="toggleEmployeeActive('${e.id}', ${e.active ? 'false' : 'true'})"
@@ -3114,7 +3141,8 @@
               <i data-lucide="pencil" class="w-4 h-4"></i>
             </button>
           </td>
-        </tr>`).join('');
+        </tr>`;
+      }).join('');
     }
 
     // --- Detail shift: rincian order + pembayaran + void/refund dalam shift ---
@@ -3396,17 +3424,75 @@
       }).join('');
     }
 
+    const EMP_ROLE_LABEL = { kasir: 'KASIR', store_manager: 'STORE MANAGER', area_manager: 'AREA MANAGER', owner: 'OWNER' };
+    function outletNameById(id) {
+      const o = (ownerOutlets || []).find(x => x.id === id);
+      return o ? o.name : '—';
+    }
     function openEmployeeModal(id) {
       const emp = id ? staffEmployees.find(e => e.id === id) : null;
+      const myRole = getPortalRole();
       document.getElementById('employee-modal-title').textContent = emp ? 'Edit Pegawai' : 'Tambah Pegawai';
       document.getElementById('employee-id').value = emp ? emp.id : '';
       document.getElementById('employee-name').value = emp ? emp.name : '';
       document.getElementById('employee-pin').value = '';
       document.getElementById('employee-pin').required = !emp;
-      document.getElementById('employee-role').value = emp ? emp.role : 'kasir';
+      document.getElementById('employee-username').value = emp ? (emp.username || '') : '';
+      document.getElementById('employee-password').value = '';
+      // Pilihan role dibatasi sesuai hak si pembuat
+      const roleSel = document.getElementById('employee-role');
+      const opts = [];
+      opts.push('<option value="kasir">Kasir</option>');
+      if (myRole === 'owner' || myRole === 'area_manager') opts.push('<option value="store_manager">Store Manager</option>');
+      if (myRole === 'owner') opts.push('<option value="area_manager">Area Manager</option>');
+      roleSel.innerHTML = opts.join('');
+      roleSel.value = emp ? emp.role : 'kasir';
+      // Dropdown outlet: store_manager pembuat -> terkunci ke outletnya (disembunyikan)
+      const outletWrap = document.getElementById('employee-outlet-wrap');
+      const outletSel = document.getElementById('employee-outlet');
+      const myOutlets = (portalSession && portalSession.outletIds) || [];
+      const scopeIds = myRole === 'owner' ? myOutlets.filter(i => i !== '*')
+        : myOutlets.filter(i => i !== '*');
+      const listOutlets = (ownerOutlets || []).filter(o => o.active && (myRole === 'owner' || scopeIds.indexOf(o.id) >= 0));
+      outletSel.innerHTML = listOutlets.map(o =>
+        `<option value="${o.id}" ${emp && emp.outletId === o.id ? 'selected' : ''}>${escapeOwnerHtml(o.name)}</option>`
+      ).join('');
+      if (myRole === 'store_manager') {
+        outletWrap.classList.add('hidden');
+        if (listOutlets.length) outletSel.value = listOutlets[0].id;
+      } else {
+        outletWrap.classList.remove('hidden');
+      }
+      // Checkbox outlet untuk Area Manager (hanya owner)
+      renderAssignOutlets(roleSel.value, emp);
       document.getElementById('employee-form-error').classList.add('hidden');
       document.getElementById('employee-modal').classList.remove('hidden');
       lucide.createIcons();
+    }
+    function renderAssignOutlets(role, emp) {
+      const wrap = document.getElementById('employee-assign-outlets-wrap');
+      const box = document.getElementById('employee-assign-outlets');
+      const show = getPortalRole() === 'owner' && role === 'area_manager';
+      wrap.classList.toggle('hidden', !show);
+      if (!show) return;
+      const active = (ownerOutlets || []).filter(o => o.active);
+      box.innerHTML = active.length ? active.map(o =>
+        `<label class="flex items-center gap-2 text-sm text-stone-700 cursor-pointer">
+           <input type="checkbox" name="assign-outlet" value="${o.id}" class="w-4 h-4 accent-red-600">
+           ${escapeOwnerHtml(o.name)}
+         </label>`
+      ).join('') : '<p class="text-xs text-stone-400 italic">Belum ada outlet aktif.</p>';
+      // Tandai yang sudah ditugaskan (mode edit)
+      if (emp && emp.id) {
+        fetch('/api/owner/employees/outlets?employee_id=' + encodeURIComponent(emp.id))
+          .then(r => r.json())
+          .then(d => {
+            const ids = (d.success && d.outlet_ids) || [];
+            box.querySelectorAll('input[name="assign-outlet"]').forEach(c => {
+              c.checked = ids.indexOf(c.value) >= 0;
+            });
+          }).catch(() => {});
+      }
     }
 
     function closeEmployeeModal() {
@@ -3419,27 +3505,48 @@
       const name = document.getElementById('employee-name').value.trim();
       const pin = document.getElementById('employee-pin').value.trim();
       const role = document.getElementById('employee-role').value;
+      const username = document.getElementById('employee-username').value.trim();
+      const password = document.getElementById('employee-password').value;
+      const outletId = document.getElementById('employee-outlet').value || null;
       const errEl = document.getElementById('employee-form-error');
       errEl.classList.add('hidden');
       if (!name) { errEl.textContent = 'Nama wajib diisi.'; errEl.classList.remove('hidden'); return; }
-      if (!id && pin.length < 4) { errEl.textContent = 'PIN baru minimal 4 digit.'; errEl.classList.remove('hidden'); return; }
+      if (role !== 'kasir' && !id && !username) { errEl.textContent = 'Username wajib untuk peran manajer.'; errEl.classList.remove('hidden'); return; }
+      if (!id && pin.length < 4 && role === 'kasir') { errEl.textContent = 'PIN baru minimal 4 digit (dipakai buka shift).'; errEl.classList.remove('hidden'); return; }
       if (pin && pin.length < 4) { errEl.textContent = 'PIN minimal 4 digit.'; errEl.classList.remove('hidden'); return; }
+      if (password && password.length < 6) { errEl.textContent = 'Password minimal 6 karakter.'; errEl.classList.remove('hidden'); return; }
+      if (!id && username && !password) { errEl.textContent = 'Password wajib untuk akun ber-username baru.'; errEl.classList.remove('hidden'); return; }
       const btn = document.getElementById('btn-submit-employee');
       btn.disabled = true;
       try {
         const res = await fetch('/api/owner/employees/upsert', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ id: id || undefined, name, pin, role })
+          body: JSON.stringify({ id: id || undefined, name, pin, role, username, password, outlet_id: outletId })
         });
         const data = await res.json();
-        if (data.success) {
-          closeEmployeeModal();
-          await loadStaffData();
-        } else {
+        if (!data.success) {
           errEl.textContent = data.message || 'Gagal menyimpan pegawai.';
           errEl.classList.remove('hidden');
+          return;
         }
+        // Tugaskan outlet untuk Area Manager (owner saja)
+        if (role === 'area_manager' && getPortalRole() === 'owner') {
+          const assigned = Array.from(document.querySelectorAll('input[name="assign-outlet"]:checked')).map(c => c.value);
+          const r2 = await fetch('/api/owner/employees/assign-outlets', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ employee_id: data.employee.id, outlet_ids: assigned })
+          });
+          const d2 = await r2.json();
+          if (!d2.success) {
+            errEl.textContent = d2.message || 'Pegawai tersimpan, tapi penugasan outlet gagal.';
+            errEl.classList.remove('hidden');
+            return;
+          }
+        }
+        closeEmployeeModal();
+        await loadStaffData();
       } catch (err) {
         errEl.textContent = 'Koneksi gagal. Coba lagi.';
         errEl.classList.remove('hidden');
