@@ -9,7 +9,7 @@
 <script>
   window.__mykitchenOutletKey = 'mykitchen_kitchen_outlet_id';
 </script>
-<script src="api-supabase.js?v=20261003y"></script>
+<script src="api-supabase.js?v=20261003z"></script>
 <style>
   body { font-family: 'Karla', system-ui, sans-serif; }
   .font-display { font-family: 'Playfair Display SC', Georgia, serif; }
@@ -226,6 +226,27 @@
     } catch (e) { crewErr('Koneksi gagal'); }
   }
   function crewErr(m) { const e = document.getElementById('crew-error'); e.textContent = m; e.classList.remove('hidden'); pinBuffer = ''; document.getElementById('crew-pin-display').textContent = '••••'; }
+  function printKitchenTicket(orderId) {
+    const o = kitchenOrders.find(x => x.id === orderId);
+    if (!o) return;
+    const items = (o.items || []).map(it =>
+      `<div style="display:flex;justify-content:space-between;margin:3px 0;">
+         <span><b>${it.qty}×</b> ${esc(it.name)}</span>
+       </div>${it.note ? `<div style="font-size:11px;margin-left:8px;">* ${esc(it.note)}</div>` : ''}`
+    ).join('');
+    const area = document.getElementById('kitchen-print-area');
+    area.innerHTML = `
+      <div style="font-family:monospace;max-width:72mm;">
+        <div style="text-align:center;font-weight:bold;font-size:14px;">TIKET DAPUR</div>
+        <div style="text-align:center;">${esc(o.id)}</div>
+        <div>${esc(o.tableOrCustomer || '')} · ${new Date(o.createdAt).toLocaleString('id-ID', { day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit' })}</div>
+        ${o.customerName ? `<div>Pemesan: ${esc(o.customerName)}</div>` : ''}
+        <div>------------------------------</div>
+        ${items}
+        <div>------------------------------</div>
+      </div>`;
+    window.print();
+  }
   function renderCrewBadge() { const b = document.getElementById('crew-badge'); if (kitchenCrew) { document.getElementById('crew-name').textContent = kitchenCrew.name; b.classList.remove('hidden'); b.classList.add('flex'); } }
   function crewLogout() { if (!confirm('Ganti kru dapur?')) return; try { localStorage.removeItem('mykitchen_kitchen_crew'); } catch (e) {} location.reload(); }
 
@@ -344,6 +365,7 @@
     return `<div id="kord-${esc(o.id)}" class="rounded-2xl bg-stone-900 border-2 ${ks === 'ready' ? 'border-emerald-500 ready-flash' : 'border-stone-700'} p-4 shadow-lg ${flash ? 'new-flash' : ''} ${expoMode ? 'max-w-3xl mx-auto w-full' : ''}">
       <div class="flex items-center gap-2 mb-2">
         <span class="font-mono font-black text-lg text-white">${esc(o.id)}</span>
+        <button onclick="printKitchenTicket('${esc(o.id)}')" class="ml-1 p-1.5 rounded-lg bg-stone-700 hover:bg-stone-600 text-stone-300" title="Cetak tiket dapur">🖨️</button>
         ${o.kitchenBy ? `<span class="text-[11px] font-bold text-amber-300">🧑‍🍳 ${esc(o.kitchenBy)}</span>` : ''}
         <span class="ml-auto px-2.5 py-1 rounded-lg font-mono font-black tabular-nums ${timerClass(min)}" data-timer="${esc(o.createdAt)}">⏱ ${min}m</span>
       </div>
@@ -551,5 +573,13 @@
 
   initKitchen();
 </script>
+<div id="kitchen-print-area" class="hidden"></div>
+<style>
+  @media print {
+    body * { visibility: hidden; }
+    #kitchen-print-area, #kitchen-print-area * { visibility: visible; }
+    #kitchen-print-area { display: block !important; position: absolute; left: 0; top: 0; width: 72mm; }
+  }
+</style>
 </body>
 </html>
