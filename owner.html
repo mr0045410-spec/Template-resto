@@ -3,7 +3,7 @@
 <head>
   <script src="brand-config.js"></script>
   <script>window.__mykitchenOutletKey = 'mykitchen_owner_outlet_filter';</script>
-  <script src="api-supabase.js?v=20261004b"></script>
+  <script src="api-supabase.js?v=20261004c"></script>
   <!-- api-shim: ganti /api/* dgn localStorage (perbaikan persistensi utk hosting statis) -->
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
@@ -2146,6 +2146,14 @@
               <option value="Coklat & Topping">Coklat & Topping</option>
               <option value="Kopi & Minuman">Kopi & Minuman</option>
               <option value="Packaging & Kemasan">Packaging & Kemasan</option>
+            </select>
+          </div>
+          <div>
+            <label class="block font-bold text-stone-700 mb-1">Jenis Bahan:</label>
+            <select id="form-ing-type" class="w-full px-3 py-2 text-xs rounded-xl border border-stone-300 focus:border-brand focus:outline-none font-medium">
+              <option value="RAW_MATERIAL">Bahan Mentah</option>
+              <option value="PREP_ITEM">Bahan Olahan</option>
+              <option value="PACKAGING">Kemasan</option>
             </select>
           </div>
           <div>
@@ -5811,7 +5819,11 @@
           <tr class="hover:bg-stone-50 transition-colors">
             <td class="py-3 px-4 sm:px-6">
               <div class="font-bold text-[#450A0A]">${item.name}</div>
-              <span class="text-[10px] text-stone-400">ID: ${item.id}</span>
+              <div class="flex items-center gap-1.5 mt-0.5">
+                <span class="text-[10px] text-stone-400">ID: ${item.id}</span>
+                ${item.itemType === 'PREP_ITEM' ? '<span class="px-1.5 py-px rounded text-[9px] font-bold bg-purple-100 text-purple-700">OLAHAN</span>'
+                  : item.itemType === 'PACKAGING' ? '<span class="px-1.5 py-px rounded text-[9px] font-bold bg-sky-100 text-sky-700">KEMASAN</span>' : ''}
+              </div>
             </td>
             <td class="py-3 px-4">
               <span class="text-xs text-stone-600 bg-stone-100 px-2.5 py-0.5 rounded-md font-medium">${item.category}</span>
@@ -6022,6 +6034,7 @@
         document.getElementById('form-ing-id').value = item.id;
         document.getElementById('form-ing-name').value = item.name;
         document.getElementById('form-ing-category').value = item.category || 'Tepung & Bahan Pokok';
+        document.getElementById('form-ing-type').value = item.itemType || 'RAW_MATERIAL';
         document.getElementById('form-ing-unit').value = item.unit || 'kg';
         document.getElementById('form-ing-stock').value = item.currentStock;
         document.getElementById('form-ing-min').value = item.minStockAlert;
@@ -6032,6 +6045,7 @@
         document.getElementById('form-ing-id').value = '';
         document.getElementById('form-ing-name').value = '';
         document.getElementById('form-ing-category').value = 'Tepung & Bahan Pokok';
+        document.getElementById('form-ing-type').value = 'RAW_MATERIAL';
         document.getElementById('form-ing-unit').value = 'kg';
         document.getElementById('form-ing-stock').value = '10';
         document.getElementById('form-ing-min').value = '3';
@@ -6057,7 +6071,8 @@
       const supplier = document.getElementById('form-ing-supplier').value.trim();
 
       const endpoint = id ? '/api/owner/ingredients/update' : '/api/owner/ingredients/add';
-      const payload = { id, name, category, unit, currentStock, minStockAlert, costPerUnit, supplier };
+      const itemType = document.getElementById('form-ing-type').value;
+      const payload = { id, name, category, unit, currentStock, minStockAlert, costPerUnit, supplier, itemType };
 
       try {
         const res = await fetch(endpoint, {
