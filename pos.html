@@ -2,7 +2,7 @@
 <html lang="id">
 <head>
   <script src="brand-config.js"></script>
-  <script src="api-supabase.js?v=20261003x"></script>
+  <script src="api-supabase.js?v=20261003y"></script>
   <!-- api-shim: ganti /api/* dgn localStorage (perbaikan persistensi utk hosting statis) -->
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
@@ -142,6 +142,13 @@
       <button onclick="openSummaryModal()" class="px-2 sm:px-3.5 py-1.5 rounded-xl shrink-0 bg-stone-100 hover:bg-stone-200 text-stone-700 font-semibold text-xs flex items-center gap-1.5 transition-colors">
         <i data-lucide="bar-chart-2" class="w-4 h-4 text-brand"></i>
         <span class="hidden sm:inline">Laporan Hari Ini</span>
+      </button>
+
+      <!-- Order QR Tamu (pending) -->
+      <button onclick="openQrPendingModal()" class="relative px-2 sm:px-3.5 py-1.5 rounded-xl shrink-0 bg-sky-50 hover:bg-sky-100 border border-sky-200 text-sky-700 font-semibold text-xs flex items-center gap-1.5 transition-colors">
+        <i data-lucide="smartphone" class="w-4 h-4"></i>
+        <span class="hidden sm:inline">Order QR</span>
+        <span id="qr-pending-badge" class="hidden absolute -top-1.5 -right-1.5 min-w-[18px] h-[18px] px-1 bg-red-600 text-white text-[10px] font-bold rounded-full items-center justify-center border-2 border-white">0</span>
       </button>
 
       <!-- Riwayat Pesanan Modal Trigger -->
@@ -604,6 +611,23 @@
   <!-- =========================================================================
        MODAL 4: RIWAYAT TRANSAKSI / STRUK
        ========================================================================= -->
+  <div id="qr-pending-modal" class="hidden fixed inset-0 z-50 flex items-center justify-center p-4 bg-[#450A0A]/80 backdrop-blur-sm">
+    <div class="w-full max-w-lg bg-white rounded-3xl p-5 sm:p-6 shadow-2xl border border-stone-200 flex flex-col max-h-[90vh]">
+      <div class="flex items-center justify-between pb-3 border-b border-stone-100">
+        <div>
+          <h3 class="text-base font-extrabold text-[#450A0A]">📱 Order QR Tamu (Belum Bayar)</h3>
+          <p class="text-xs text-stone-500">Pilih order untuk dimuat ke keranjang & dibayar</p>
+        </div>
+        <button onclick="closeQrPendingModal()" class="p-2 rounded-full text-stone-400 hover:text-stone-700 hover:bg-stone-100">
+          <i data-lucide="x" class="w-5 h-5"></i>
+        </button>
+      </div>
+      <div id="qr-pending-list" class="flex-1 overflow-y-auto py-3 space-y-2 text-xs">
+        <p class="text-center text-stone-400 py-6">Memuat...</p>
+      </div>
+    </div>
+  </div>
+
   <div id="history-modal" class="hidden fixed inset-0 z-50 flex items-center justify-center p-4 bg-[#450A0A]/80 backdrop-blur-sm">
     <div class="w-full max-w-2xl bg-white rounded-3xl p-5 sm:p-6 shadow-2xl border border-stone-200 animate-in fade-in zoom-in-95 duration-150 flex flex-col max-h-[90vh]">
       <div class="flex items-center justify-between pb-3 border-b border-stone-100">
@@ -740,6 +764,9 @@
     }
     setInterval(updateClock, 1000);
     updateClock();
+    // Badge order QR pending: refresh tiap 20 detik
+    setInterval(() => { try { refreshQrBadge(); } catch (e) {} }, 20000);
+    setTimeout(() => { try { refreshQrBadge(); } catch (e) {} }, 3000);
 
     // Init App
     // URUTAN PENTING (multi-outlet): kunci outlet dari shift DULU
@@ -1947,15 +1974,26 @@
       };
 
       try {
-        const res = await fetch('/api/pos/checkout', {
+        // Order QR pending -> selesaikan via checkout-pending (tanpa bikin order baru)
+        const isQrPending = !!pendingQrOrder;
+        const url = isQrPending ? '/api/pos/checkout-pending' : '/api/pos/checkout';
+        const finalPayload = isQrPending ? {
+          pending_order_id: pendingQrOrder.id,
+          payment_method: selectedPayment,
+          cash_paid: selectedPayment === 'cash' ? currentCashReceived : grandTotal,
+          cashier: currentShift ? currentShift.employeeName : 'Kasir 1',
+          shift_id: currentShift ? currentShift.id : null
+        } : payload;
+        const res = await fetch(url, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify(payload)
+          body: JSON.stringify(finalPayload)
         });
 
         const result = await res.json();
         if (result.success && result.order) {
           activeCompletedOrder = result.order;
+          pendingQrOrder = null; // reset
           closePaymentModal();
           renderReceipt(result.order);
           clearPromo(true); // reset promo utk transaksi berikutnya
@@ -1966,6 +2004,7 @@
           document.getElementById('receipt-modal').classList.remove('hidden');
           if (result.offline) toast('Mode offline: order tersimpan & otomatis disinkron saat internet kembali.', 'warning');
           try { await initPOS(); } catch (e) { /* offline: lewati refresh */ }
+          refreshQrBadge();
         } else {
           toast('Gagal memproses transaksi: ' + (result.message || 'Error server'), 'error');
         }
@@ -2261,6 +2300,77 @@
 
     function closeHistoryModal() {
       document.getElementById('history-modal').classList.add('hidden');
+    }
+
+    // ===== Order QR Tamu (pending) =====
+    let pendingQrOrder = null; // order QR yg sedang dimuat ke keranjang
+
+    async function openQrPendingModal() {
+      document.getElementById('qr-pending-modal').classList.remove('hidden');
+      await loadQrPendingList();
+    }
+    function closeQrPendingModal() {
+      document.getElementById('qr-pending-modal').classList.add('hidden');
+    }
+    async function loadQrPendingList() {
+      const box = document.getElementById('qr-pending-list');
+      box.innerHTML = '<p class="text-center text-stone-400 py-6">Memuat...</p>';
+      try {
+        const res = await fetch('/api/pos/pending-orders');
+        const data = await res.json();
+        const list = (data.success && data.orders) || [];
+        updateQrBadge(list.length);
+        if (!list.length) {
+          box.innerHTML = '<p class="text-center text-stone-400 py-6">Tidak ada order QR menunggu pembayaran.</p>';
+          return;
+        }
+        box.innerHTML = list.map(o => `
+          <div class="bg-sky-50 border border-sky-200 rounded-2xl p-3 flex items-center gap-3">
+            <div class="flex-1 min-w-0">
+              <p class="font-extrabold text-sm text-[#450A0A]">${escapeHtml(o.tableOrCustomer || o.id)}</p>
+              <p class="text-[11px] text-stone-500 font-mono">${escapeHtml(o.id)}</p>
+              <p class="text-[11px] text-stone-500">${(o.items || []).map(i => escapeHtml(i.name) + ' ×' + i.qty).join(', ')}</p>
+            </div>
+            <div class="text-right shrink-0">
+              <p class="font-extrabold text-sm">${formatRupiah(o.total)}</p>
+              <button onclick="pickQrPending('${o.id}')" class="mt-1 px-3 py-1.5 rounded-xl bg-sky-600 hover:bg-sky-700 text-white text-xs font-bold">Pilih</button>
+            </div>
+          </div>`).join('');
+      } catch (e) {
+        box.innerHTML = '<p class="text-center text-stone-400 py-6">Gagal memuat.</p>';
+      }
+    }
+    async function pickQrPending(orderId) {
+      try {
+        const res = await fetch('/api/pos/pending-orders');
+        const data = await res.json();
+        const o = ((data.success && data.orders) || []).find(x => x.id === orderId);
+        if (!o) { toast('Order tidak ditemukan.', 'error'); return; }
+        // Muat ke keranjang
+        cart = (o.items || []).map(i => ({ id: i.id, name: i.name, price: i.price, qty: i.qty, note: i.note || '' }));
+        pendingQrOrder = o;
+        closeQrPendingModal();
+        renderCart();
+        // Set tipe & meja/nama
+        if (typeof setOrderType === 'function') setOrderType('dine-in');
+        const tc = document.getElementById('order-table-customer');
+        if (tc) tc.value = (o.tableOrCustomer || '').replace(/^Meja\s+/i, '');
+        toast('Order QR ' + o.id + ' dimuat. Lanjut ke pembayaran.', 'info');
+        updateQrBadge(0);
+      } catch (e) { toast('Gagal memuat order.', 'error'); }
+    }
+    function updateQrBadge(n) {
+      const b = document.getElementById('qr-pending-badge');
+      if (!b) return;
+      if (n > 0) { b.textContent = n; b.classList.remove('hidden'); b.classList.add('flex'); }
+      else { b.classList.add('hidden'); b.classList.remove('flex'); }
+    }
+    async function refreshQrBadge() {
+      try {
+        const res = await fetch('/api/pos/pending-orders');
+        const data = await res.json();
+        updateQrBadge(((data.success && data.orders) || []).length);
+      } catch (e) {}
     }
 
     // Startup
