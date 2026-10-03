@@ -276,9 +276,34 @@
       description: r.description || '', price: r.price,
       bundleInfo: r.bundle_info || '', safeForShipping: !!r.safe_for_shipping,
       stockQty: r.stock_qty, inStock: !!r.in_stock, image: r.image,
-      highlightTexture: r.highlight_texture || '', costPrice: r.cost_price
+      highlightTexture: r.highlight_texture || '', costPrice: r.cost_price,
+      outletId: r.outlet_id || null, isCentral: !r.outlet_id
     };
   }
+  // Menu pusat (outlet_id NULL) tampil di semua outlet.
+  // Filter menu: outlet X -> (X ATAU pusat); 'ALL'/kosong -> tanpa filter.
+  function menuScopeSel(query) {
+    if (!OUTLET_TABLES['menu_items']) return sel('menu_items', query);
+    return outletReady().then(function (ready) {
+      if (!ready) return sel('menu_items', query);
+      var oid = currentOutletId();
+      if (!oid || oid === 'ALL') return sel('menu_items', query);
+      var ids = oid.indexOf(',') >= 0 ? oid.split(',') : [oid];
+      ids = ids.map(function (x) { return String(x).trim(); }).filter(Boolean);
+      if (!ids.length) return sel('menu_items', query);
+      var parts = ids.map(function (id) { return 'outlet_id.eq.' + encodeURIComponent(id); });
+      parts.push('outlet_id.is.null');
+      return sel('menu_items', query + '&or=(' + parts.join(',') + ')', { allOutlets: true });
+    });
+  }
+  // Cek hak edit menu: owner bebas; AM boleh utak-atik menu pusat & outlet scope-nya.
+  function menuScopeOk(session, row) {
+    if (!session || session.role === 'owner') return true;
+    if (!row.outlet_id) return true; // menu pusat
+    return (session.outletIds || []).indexOf(row.outlet_id) >= 0;
+  }
+  // Throw khusus untuk pelanggaran scope di dalam promise chain menu.
+  function menuForbidden(msg) { throw { status: 403, menuScope: true, message: msg || 'Menu di luar wewenang Anda.' }; }
   function menuItemToRow(m) {
     return {
       id: m.id, name: m.name, category: m.category, tag: m.tag || '',
@@ -628,7 +653,7 @@
 
   // 1. GET /api/menu
   routes['GET /api/menu'] = function () {
-    return sel('menu_items', 'select=*&order=sort_order.asc,created_at.asc').then(function (rows) {
+    return menuScopeSel('select=*&order=sort_order.asc,created_at.asc').then(function (rows) {
       return ok({ success: true, data: { categories: SEED_CATEGORIES, menuItems: rows.map(rowToMenuItem) } });
     }).catch(serverError);
   };
@@ -860,13 +885,16 @@
   routes['POST /api/menu/toggle-stock'] = function (body) {
     var chk = requirePortal(ROLE_ALL_MGR);
     if (!chk.ok) return Promise.resolve(chk.res);
-    return sel('menu_items', 'select=*&id=eq.' + encodeURIComponent(body.id)).then(function (rows) {
+    return menuScopeSel('select=*&id=eq.' + encodeURIComponent(body.id)).then(function (rows) {
       if (!rows.length) return notFound({ success: false, message: 'Item tidak ditemukan' });
       var r = rows[0];
+      if (!menuScopeOk(chk.session, r)) return Promise.resolve(forbidden({ success: false, message: 'Menu di luar wewenang Anda.' }));
       var inStock = typeof body.inStock === 'boolean' ? body.inStock : !r.in_stock;
       var stockQty = inStock ? (r.stock_qty > 0 ? r.stock_qty : 20) : 0;
+      // Menu pusat: stoknya global (berlaku semua outlet).
+      var o = r.outlet_id ? undefined : { allOutlets: true };
       return upd('menu_items', 'id=eq.' + encodeURIComponent(body.id),
-        { in_stock: inStock, stock_qty: stockQty, updated_at: new Date().toISOString() })
+        { in_stock: inStock, stock_qty: stockQty, updated_at: new Date().toISOString() }, o)
         .then(function (u) { return ok({ success: true, item: rowToMenuItem(u[0]) }); });
     }).catch(serverError);
   };
@@ -875,14 +903,16 @@
   routes['POST /api/menu/update-stock'] = function (body) {
     var chk = requirePortal(ROLE_ALL_MGR);
     if (!chk.ok) return Promise.resolve(chk.res);
-    return sel('menu_items', 'select=*&id=eq.' + encodeURIComponent(body.id)).then(function (rows) {
+    return menuScopeSel('select=*&id=eq.' + encodeURIComponent(body.id)).then(function (rows) {
       if (!rows.length) return notFound({ success: false, message: 'Item tidak ditemukan' });
       var r = rows[0];
+      if (!menuScopeOk(chk.session, r)) return Promise.resolve(forbidden({ success: false, message: 'Menu di luar wewenang Anda.' }));
       var stockQty = r.stock_qty;
       if (typeof body.stockQty === 'number') stockQty = Math.max(0, Math.floor(body.stockQty));
       else if (typeof body.delta === 'number') stockQty = Math.max(0, Math.floor(stockQty + body.delta));
+      var o2 = r.outlet_id ? undefined : { allOutlets: true };
       return upd('menu_items', 'id=eq.' + encodeURIComponent(body.id),
-        { stock_qty: stockQty, in_stock: stockQty > 0, updated_at: new Date().toISOString() })
+        { stock_qty: stockQty, in_stock: stockQty > 0, updated_at: new Date().toISOString() }, o2)
         .then(function (u) { return ok({ success: true, item: rowToMenuItem(u[0]) }); });
     }).catch(serverError);
   };
@@ -909,7 +939,21 @@
       image: body.imageBase64 || body.image || DEFAULT_MENU_IMG,
       highlightTexture: body.highlightTexture || 'Freshly baked daily'
     };
-    return ins('menu_items', [menuItemToRow(item)]).then(function (rows) {
+    var mrow = menuItemToRow(item);
+    var explicitOutlet = body.outlet_id === 'CENTRAL' ? null : (body.outlet_id || undefined);
+    var createOp;
+    if (explicitOutlet !== undefined) {
+      var sess3b = getPortalSession();
+      if (sess3b && sess3b.role === 'area_manager' && explicitOutlet !== null &&
+          (sess3b.outletIds || []).indexOf(explicitOutlet) < 0) {
+        return Promise.resolve(forbidden({ success: false, message: 'Outlet di luar wewenang Anda.' }));
+      }
+      mrow.outlet_id = explicitOutlet; // null = menu pusat
+      createOp = rawIns('menu_items', [mrow]);
+    } else {
+      createOp = ins('menu_items', [mrow]);
+    }
+    return createOp.then(function (rows) {
       return created({ success: true, item: rowToMenuItem(rows[0]) });
     }).catch(serverError);
   };
@@ -918,8 +962,9 @@
   routes['PUT /api/menu'] = function (body) {
     var chk = requirePortal(ROLE_MGR);
     if (!chk.ok) return Promise.resolve(chk.res);
-    return sel('menu_items', 'select=*&id=eq.' + encodeURIComponent(body.id)).then(function (rows) {
+    return sel('menu_items', 'select=*&id=eq.' + encodeURIComponent(body.id), { allOutlets: true }).then(function (rows) {
       if (!rows.length) return notFound({ success: false, message: 'Item tidak ditemukan' });
+      if (!menuScopeOk(chk.session, rows[0])) return Promise.resolve(forbidden({ success: false, message: 'Menu di luar wewenang Anda.' }));
       var cur = rowToMenuItem(rows[0]);
       var newStockQty = body.stockQty !== undefined
         ? Math.max(0, Math.floor(Number(body.stockQty) || 0)) : cur.stockQty;
@@ -943,7 +988,15 @@
         highlight_texture: body.highlightTexture !== undefined ? body.highlightTexture : cur.highlightTexture,
         updated_at: new Date().toISOString()
       };
-      return upd('menu_items', 'id=eq.' + encodeURIComponent(body.id), patch)
+      if (body.outlet_id !== undefined) {
+        var newOid = body.outlet_id === 'CENTRAL' ? null : (body.outlet_id || null);
+        if (chk.session.role === 'area_manager' && newOid !== null &&
+            (chk.session.outletIds || []).indexOf(newOid) < 0) {
+          return Promise.resolve(forbidden({ success: false, message: 'Outlet di luar wewenang Anda.' }));
+        }
+        patch.outlet_id = newOid;
+      }
+      return upd('menu_items', 'id=eq.' + encodeURIComponent(body.id), patch, { allOutlets: true })
         .then(function (u) { return ok({ success: true, item: rowToMenuItem(u[0]) }); });
     }).catch(serverError);
   };
@@ -973,7 +1026,11 @@
   routes['DELETE /api/menu'] = function (body) {
     var chk = requirePortal(ROLE_MGR);
     if (!chk.ok) return Promise.resolve(chk.res);
-    return del('menu_items', 'id=eq.' + encodeURIComponent(body.id)).then(function (rows) {
+    return sel('menu_items', 'select=id,outlet_id&id=eq.' + encodeURIComponent(body.id), { allOutlets: true }).then(function (erows) {
+      if (!erows.length) return notFound({ success: false, message: 'Item tidak ditemukan' });
+      if (!menuScopeOk(chk.session, erows[0])) return Promise.resolve(forbidden({ success: false, message: 'Menu di luar wewenang Anda.' }));
+      return del('menu_items', 'id=eq.' + encodeURIComponent(body.id), { allOutlets: true });
+    }).then(function (rows) {
       if (rows && rows.length) return ok({ success: true, message: 'Menu berhasil dihapus' });
       return notFound({ success: false, message: 'Item tidak ditemukan' });
     }).catch(serverError);
@@ -2110,9 +2167,10 @@
         ? (String(body.price).startsWith('Rp') ? body.price : formatRp(String(body.price).replace(/[^0-9]/g, '')))
         : 'Rp 25.000';
       var costP = Math.round(calculatedCost);
-      return sel('menu_items', 'select=*&id=eq.' + encodeURIComponent(menuId)).then(function (mrows) {
+      return sel('menu_items', 'select=*&id=eq.' + encodeURIComponent(menuId), { allOutlets: true }).then(function (mrows) {
         var menuOp;
         var isNewMenu = !mrows.length;
+        if (!isNewMenu && !menuScopeOk(chk.session, mrows[0])) menuForbidden();
         var oldPv = isNewMenu ? 0 : (Number(mrows[0].price_value) || parsePriceToNumber(mrows[0].price));
         if (!mrows.length) {
           var item = {
@@ -2123,7 +2181,16 @@
             image: body.image || DEFAULT_MENU_IMG,
             highlightTexture: 'Freshly baked daily', costPrice: costP
           };
-          menuOp = ins('menu_items', [menuItemToRow(item)]).then(function (nr) { return nr[0]; });
+          var nrow = menuItemToRow(item);
+          var newOid = body.outlet_id === 'CENTRAL' ? null : (body.outlet_id || undefined);
+          if (newOid !== undefined) {
+            if (chk.session.role === 'area_manager' && newOid !== null &&
+                (chk.session.outletIds || []).indexOf(newOid) < 0) menuForbidden('Outlet di luar wewenang Anda.');
+            nrow.outlet_id = newOid; // null = menu pusat
+            menuOp = rawIns('menu_items', [nrow]).then(function (nr) { return nr[0]; });
+          } else {
+            menuOp = ins('menu_items', [nrow]).then(function (nr) { return nr[0]; });
+          }
         } else {
           var patch = {
             name: body.name,
@@ -2132,7 +2199,13 @@
           if (body.category) patch.category = body.category;
           if (body.price) { patch.price = formattedPrice; patch.price_value = parsePriceToNumber(body.price); }
           if (body.image) patch.image = body.image;
-          menuOp = upd('menu_items', 'id=eq.' + encodeURIComponent(menuId), patch)
+          if (body.outlet_id !== undefined) {
+            var eOid = body.outlet_id === 'CENTRAL' ? null : (body.outlet_id || null);
+            if (chk.session.role === 'area_manager' && eOid !== null &&
+                (chk.session.outletIds || []).indexOf(eOid) < 0) menuForbidden('Outlet di luar wewenang Anda.');
+            patch.outlet_id = eOid;
+          }
+          menuOp = upd('menu_items', 'id=eq.' + encodeURIComponent(menuId), patch, { allOutlets: true })
             .then(function (ur) { return ur[0]; });
         }
         return menuOp.then(function (row) { return { row: row, oldPv: oldPv, isNewMenu: isNewMenu }; });
@@ -2164,7 +2237,7 @@
         success: true, menuItem: r.menuItem, recipe: r.recipe,
         calculatedHpp: r.calculatedHpp, message: 'Menu dan resep berhasil disimpan'
       });
-    }).catch(serverError);
+    }).catch(function (e) { if (e && e.menuScope) return forbidden({ success: false, message: e.message }); return serverError(e); });
   };
 
   /* ================================================================== */
