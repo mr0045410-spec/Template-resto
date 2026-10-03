@@ -190,6 +190,17 @@
   /* (skema di-apply terpisah via Supabase SQL Editor). Probe sekali     */
   /* saat dibutuhkan, hasil di-cache — checkout lama tetap jalan.        */
   /* ------------------------------------------------------------------ */
+  var _hasKitchenBy = null;
+  function ordersHasKitchenBy() {
+    if (_hasKitchenBy !== null) return Promise.resolve(_hasKitchenBy);
+    return sel('orders', 'select=kitchen_by&limit=1').then(function () {
+      _hasKitchenBy = true;
+      return true;
+    }).catch(function (e) {
+      _hasKitchenBy = !/kitchen_by/i.test(String((e && e.message) || ''));
+      return _hasKitchenBy;
+    });
+  }
   var _hasKitchenStatus = null;
   function ordersHasKitchenStatus() {
     if (_hasKitchenStatus !== null) return Promise.resolve(_hasKitchenStatus);
@@ -288,7 +299,8 @@
       bundleInfo: r.bundle_info || '', safeForShipping: !!r.safe_for_shipping,
       stockQty: r.stock_qty, inStock: !!r.in_stock, image: r.image,
       highlightTexture: r.highlight_texture || '', costPrice: r.cost_price,
-      outletId: r.outlet_id || null, isCentral: !r.outlet_id
+      outletId: r.outlet_id || null, isCentral: !r.outlet_id,
+      station: r.station || ''
     };
   }
   // Menu pusat (outlet_id NULL) tampil di semua outlet.
@@ -305,6 +317,16 @@
       var parts = ids.map(function (id) { return 'outlet_id.eq.' + encodeURIComponent(id); });
       parts.push('outlet_id.is.null');
       return sel('menu_items', query + '&or=(' + parts.join(',') + ')', { allOutlets: true });
+    });
+  }
+  var _hasMenuStation = null;
+  function menuHasStation() {
+    if (_hasMenuStation !== null) return Promise.resolve(_hasMenuStation);
+    return sel('menu_items', 'select=station&limit=1').then(function () {
+      _hasMenuStation = true; return true;
+    }).catch(function (e) {
+      _hasMenuStation = !/station/i.test(String((e && e.message) || ''));
+      return _hasMenuStation;
     });
   }
   // Cek hak edit menu: owner bebas; AM boleh utak-atik menu pusat & outlet scope-nya.
@@ -360,7 +382,8 @@
       cost_price: m.costPrice !== undefined ? m.costPrice : 0,
       stock_qty: m.stockQty, in_stock: !!m.inStock, image: m.image,
       highlight_texture: m.highlightTexture || '', bundle_info: m.bundleInfo || '',
-      safe_for_shipping: !!m.safeForShipping, updated_at: new Date().toISOString()
+      safe_for_shipping: !!m.safeForShipping, station: m.station || '',
+      updated_at: new Date().toISOString()
     };
   }
   function rowToOrder(r) {
@@ -376,6 +399,8 @@
       cashChange: r.cash_change, paymentReference: r.payment_reference || '',
       cashier: r.cashier, status: r.status, shiftId: r.shift_id || null,
       kitchenStatus: r.kitchen_status || 'new',
+      kitchenBy: r.kitchen_by || '',
+      runnerCalledAt: r.runner_called_at || null,
       clientRef: r.client_ref || null,
       promoId: r.promo_id || null, promoName: r.promo_name || null,
       customerId: r.customer_id || null, customerName: r.customer_name || null,
@@ -547,11 +572,12 @@
     var name = String(body.name || '').trim();
     if (!name) return Promise.resolve(bad({ success: false, message: 'Nama pegawai wajib diisi' }));
     var role = String(body.role || 'kasir');
-    if (['kasir', 'store_manager', 'area_manager'].indexOf(role) < 0) {
+    if (['kasir', 'dapur', 'store_manager', 'area_manager'].indexOf(role) < 0) {
       return Promise.resolve(bad({ success: false, message: 'Role tidak valid.' }));
     }
-    if (me.role === 'store_manager' && role !== 'kasir') {
-      return Promise.resolve(forbidden({ success: false, message: 'Store Manager hanya boleh menambah kasir.' }));
+    var isOpsRole = (role === 'kasir' || role === 'dapur');
+    if (me.role === 'store_manager' && !isOpsRole) {
+      return Promise.resolve(forbidden({ success: false, message: 'Store Manager hanya boleh menambah kasir/dapur.' }));
     }
     if (me.role === 'area_manager' && role === 'area_manager') {
       return Promise.resolve(forbidden({ success: false, message: 'Area Manager tidak bisa mengangkat Area Manager.' }));
@@ -559,7 +585,7 @@
     var username = String(body.username || '').trim();
     var password = body.password === undefined || body.password === null ? '' : String(body.password);
     var pin = body.pin === undefined || body.pin === null ? '' : String(body.pin).trim();
-    if (role !== 'kasir' && !body.id && !username) {
+    if (!isOpsRole && !body.id && !username) {
       return Promise.resolve(bad({ success: false, message: 'Username wajib diisi untuk peran manajer.' }));
     }
     if (username && !validUsername(username)) {
@@ -607,12 +633,12 @@
             return canManageEmployee(me, scopeIds).then(function (allowed) {
               if (!allowed) return forbidden({ success: false, message: 'Pegawai di luar wewenangmu.' });
               // Role target setelah edit juga harus dalam hak si pengelola
-              if (me.role === 'store_manager' && role !== 'kasir') {
-                return forbidden({ success: false, message: 'Store Manager hanya boleh mengelola kasir.' });
+              if (me.role === 'store_manager' && !isOpsRole) {
+                return forbidden({ success: false, message: 'Store Manager hanya boleh mengelola kasir/dapur.' });
               }
               return usernameTaken(username, old.id).then(function (taken) {
                 if (taken) return bad({ success: false, message: 'Username sudah dipakai.' });
-                if (role !== 'kasir' && !username && !old.username) {
+                if (!isOpsRole && !username && !old.username) {
                   return bad({ success: false, message: 'Username wajib diisi untuk peran manajer.' });
                 }
                 return hashPwIfNeeded(password).then(function (pwHash) {
@@ -628,8 +654,8 @@
         }).catch(serverError);
     }
     // ---- CREATE ----
-    if (role === 'kasir' && pin === '') {
-      return Promise.resolve(bad({ success: false, message: 'PIN wajib diisi untuk kasir baru (dipakai buka shift).' }));
+    if (isOpsRole && pin === '') {
+      return Promise.resolve(bad({ success: false, message: 'PIN wajib diisi untuk kasir/dapur baru.' }));
     }
     return usernameTaken(username, null).then(function (taken) {
       if (taken) return Promise.resolve(bad({ success: false, message: 'Username sudah dipakai.' }));
@@ -819,6 +845,7 @@
         var e = rows && rows[0];
         if (!e || !e.active || !e.password_hash) return unauthorized({ success: false, message: 'Username atau password salah.' });
         if (e.role === 'kasir') return forbidden({ success: false, message: 'Akun kasir hanya untuk POS, tidak bisa buka portal.' });
+        if (e.role === 'dapur') return forbidden({ success: false, message: 'Akun dapur hanya untuk layar dapur, tidak bisa buka portal.' });
         if (['area_manager', 'store_manager'].indexOf(e.role) < 0) return forbidden({ success: false, message: 'Peran tidak dikenal.' });
         return verifyPassword(password, e.password_hash).then(function (valid) {
           if (!valid) return unauthorized({ success: false, message: 'Username atau password salah.' });
@@ -1035,7 +1062,8 @@
       stockQty: stockQty,
       inStock: (typeof body.stockQty === 'number' ? stockQty > 0 : body.inStock !== false),
       image: body.imageBase64 || body.image || DEFAULT_MENU_IMG,
-      highlightTexture: body.highlightTexture || 'Freshly baked daily'
+      highlightTexture: body.highlightTexture || 'Freshly baked daily',
+      station: String(body.station || '').slice(0, 40)
     };
     var mrow = menuItemToRow(item);
     var explicitOutlet = body.outlet_id === 'CENTRAL' ? null : (body.outlet_id || undefined);
@@ -1047,9 +1075,15 @@
         return Promise.resolve(forbidden({ success: false, message: 'Outlet di luar wewenang Anda.' }));
       }
       mrow.outlet_id = explicitOutlet; // null = menu pusat
-      createOp = rawIns('menu_items', [mrow]);
+      createOp = menuHasStation().then(function (hs) {
+        if (!hs) delete mrow.station;
+        return rawIns('menu_items', [mrow]);
+      });
     } else {
-      createOp = ins('menu_items', [mrow]);
+      createOp = menuHasStation().then(function (hs) {
+        if (!hs) delete mrow.station;
+        return ins('menu_items', [mrow]);
+      });
     }
     return createOp.then(function (rows) {
       return created({ success: true, item: rowToMenuItem(rows[0]) });
@@ -1094,8 +1128,11 @@
         }
         patch.outlet_id = newOid;
       }
-      return upd('menu_items', 'id=eq.' + encodeURIComponent(body.id), patch, { allOutlets: true })
-        .then(function (u) { return ok({ success: true, item: rowToMenuItem(u[0]) }); });
+      if (body.station !== undefined) patch.station = String(body.station || '').slice(0, 40);
+      return menuHasStation().then(function (hs) {
+        if (!hs) delete patch.station;
+        return upd('menu_items', 'id=eq.' + encodeURIComponent(body.id), patch, { allOutlets: true });
+      }).then(function (u) { return ok({ success: true, item: rowToMenuItem(u[0]) }); });
     }).catch(serverError);
   };
 
@@ -1148,7 +1185,7 @@
   routes['GET /api/kitchen/orders'] = function () {
     return ordersHasKitchenStatus().then(function (has) {
       if (!has) return ok({ success: true, orders: [], needSql: true });
-      var q = 'select=*&status=neq.voided&kitchen_status=in.(new,preparing,ready)&order=created_at.asc&limit=100';
+      var q = 'select=*&status=neq.voided&kitchen_status=in.(new,preparing,ready,held)&order=created_at.asc&limit=100';
       return sel('orders', q).then(function (rows) {
         return ok({ success: true, orders: rows.map(rowToOrder) });
       });
@@ -1159,7 +1196,7 @@
   //     new -> preparing -> ready -> served. Terbuka spt POS; order wajib
   //     milik outlet perangkat ini (dicek via scope).
   routes['POST /api/kitchen/order-status'] = function (body) {
-    var VALID_KS = ['new', 'preparing', 'ready', 'served'];
+    var VALID_KS = ['new', 'preparing', 'ready', 'served', 'held'];
     var ks = String(body.kitchen_status || '');
     if (VALID_KS.indexOf(ks) < 0) {
       return Promise.resolve(bad({ success: false, message: 'Status dapur tidak valid.' }));
@@ -1170,15 +1207,184 @@
         .then(function (rows) {
           if (!rows.length) return notFound({ success: false, message: 'Order tidak ditemukan di outlet ini.' });
           if (rows[0].status === 'voided') return bad({ success: false, message: 'Order sudah dibatalkan.' });
-          return upd('orders', 'id=eq.' + encodeURIComponent(body.order_id), { kitchen_status: ks })
-            .then(function (u) {
-              return ok({ success: true, order: rowToOrder(u[0]) });
-            });
+          var patch = { kitchen_status: ks };
+          var kb = String(body.kitchen_by || '').slice(0, 60);
+          return ordersHasKitchenBy().then(function (hasKb) {
+            if (hasKb && kb) patch.kitchen_by = kb;
+            return upd('orders', 'id=eq.' + encodeURIComponent(body.order_id), patch);
+          }).then(function (u) {
+            return ok({ success: true, order: rowToOrder(u[0]) });
+          });
         });
     }).catch(serverError);
   };
 
-  // 7d. GET /api/kitchen/ingredients — stok bahan outlet perangkat dapur.
+  // 7d. POST /api/kitchen/login — { pin }. Kru dapur (role=dapur) aktif di
+  //     outlet perangkat ini. Tanpa sesi portal; sesi disimpan lokal di dapur.html.
+  routes['POST /api/kitchen/login'] = function (body) {
+    var pin = String(body.pin == null ? '' : body.pin);
+    if (!pin) return Promise.resolve(bad({ success: false, message: 'PIN wajib diisi.' }));
+    return sel('employees', 'select=id,name,pin_hash,active,outlet_id&role=eq.dapur&active=eq.true')
+      .then(function (rows) {
+        var emp = (rows || []).find(function (e) { return hashPin(pin) === e.pin_hash; });
+        if (!emp) return unauthorized({ success: false, message: 'PIN salah atau tidak terdaftar di dapur outlet ini.' });
+        return ok({ success: true, crew: { id: emp.id, name: emp.name } });
+      }).catch(serverError);
+  };
+
+  // 7e. POST /api/kitchen/item-status — { order_id, item_index, done }
+  //     Per-item bumping: tandai 1 item selesai/belum. Kalau semua item done
+  //     -> order otomatis ke 'ready'; kalau ada yg dibuka lagi dari 'ready'
+  //     -> kembali ke 'preparing'.
+  routes['POST /api/kitchen/item-status'] = function (body) {
+    var idx = Number(body.item_index);
+    var done = !!body.done;
+    if (!Number.isInteger(idx) || idx < 0) {
+      return Promise.resolve(bad({ success: false, message: 'item_index tidak valid.' }));
+    }
+    return ordersHasKitchenStatus().then(function (has) {
+      if (!has) return bad({ success: false, message: 'Kolom kitchen_status belum ada.' });
+      return sel('orders', 'select=id,items,status,kitchen_status&id=eq.' + encodeURIComponent(body.order_id) + '&limit=1')
+        .then(function (rows) {
+          if (!rows.length) return notFound({ success: false, message: 'Order tidak ditemukan di outlet ini.' });
+          var o = rows[0];
+          if (o.status === 'voided') return bad({ success: false, message: 'Order sudah dibatalkan.' });
+          var items = Array.isArray(o.items) ? o.items : [];
+          if (idx >= items.length) return bad({ success: false, message: 'Item tidak ada.' });
+          items = items.map(function (it, i) {
+            var c = Object.assign({}, it);
+            if (i === idx) { if (done) c.kdsDone = true; else delete c.kdsDone; }
+            return c;
+          });
+          var allDone = items.length > 0 && items.every(function (it) { return !!it.kdsDone; });
+          var patch = { items: items };
+          var curKs = o.kitchen_status || 'new';
+          if (allDone && curKs !== 'ready' && curKs !== 'served') patch.kitchen_status = 'ready';
+          else if (!allDone && curKs === 'ready') patch.kitchen_status = 'preparing';
+          return upd('orders', 'id=eq.' + encodeURIComponent(body.order_id), patch)
+            .then(function (u) { return ok({ success: true, order: rowToOrder(u[0]) }); });
+        });
+    }).catch(serverError);
+  };
+
+  // 7f. GET /api/kitchen/recent — order yg selesai (served) 2 jam terakhir,
+  //     untuk ticket recall.
+  routes['GET /api/kitchen/recent'] = function () {
+    return ordersHasKitchenStatus().then(function (has) {
+      if (!has) return ok({ success: true, orders: [] });
+      var since = new Date(Date.now() - 2 * 3600 * 1000).toISOString();
+      var q = 'select=*&status=neq.voided&kitchen_status=eq.served&created_at=gte.' + encodeURIComponent(since) + '&order=created_at.desc&limit=50';
+      return sel('orders', q).then(function (rows) {
+        return ok({ success: true, orders: rows.map(rowToOrder) });
+      });
+    }).catch(serverError);
+  };
+
+  // 7g. POST /api/kitchen/menu-stock — { menu_id, in_stock }
+  //     Tombol 86 dari dapur. Menu pusat + konteks 1 outlet -> override khusus
+  //     outlet ini (tidak mengganggu outlet lain).
+  routes['POST /api/kitchen/menu-stock'] = function (body) {
+    var inStock = !!body.in_stock;
+    return menuScopeSel('select=*&id=eq.' + encodeURIComponent(body.menu_id)).then(function (rows) {
+      if (!rows.length) return notFound({ success: false, message: 'Menu tidak ditemukan di outlet ini.' });
+      var r = rows[0];
+      var stockQty = inStock ? (Number(r.stock_qty) > 0 ? Number(r.stock_qty) : 20) : 0;
+      var singleOid = (!r.outlet_id) ? menuSingleOutlet() : null;
+      if (singleOid) {
+        return stockOverrideReady().then(function (ready) {
+          if (!ready) return bad({ success: false, message: 'Tabel menu_outlet_stock belum ada.' });
+          var ov = { menu_id: r.id, outlet_id: singleOid, stock_qty: stockQty, in_stock: inStock, updated_at: new Date().toISOString() };
+          return rawSel('menu_outlet_stock', 'select=menu_id&menu_id=eq.' + encodeURIComponent(r.id) + '&outlet_id=eq.' + encodeURIComponent(singleOid))
+            .then(function (ex) {
+              var op = ex.length
+                ? rawUpd('menu_outlet_stock', 'menu_id=eq.' + encodeURIComponent(r.id) + '&outlet_id=eq.' + encodeURIComponent(singleOid), { stock_qty: stockQty, in_stock: inStock, updated_at: ov.updated_at })
+                : rawIns('menu_outlet_stock', [ov]);
+              return op.then(function () { return ok({ success: true, in_stock: inStock }); });
+            });
+        }).catch(serverError);
+      }
+      var o = r.outlet_id ? undefined : { allOutlets: true };
+      return upd('menu_items', 'id=eq.' + encodeURIComponent(r.id),
+        { in_stock: inStock, stock_qty: stockQty, updated_at: new Date().toISOString() }, o)
+        .then(function () { return ok({ success: true, in_stock: inStock }); })
+        .catch(serverError);
+    }).catch(serverError);
+  };
+
+  // 7h. POST /api/kitchen/waste — { ingredient_id?, menu_name?, qty, unit?, reason, note?, reported_by }
+  //     Catat waste langsung dari dapur (bahan tumpah/gosong).
+  routes['POST /api/kitchen/waste'] = function (body) {
+    var amount = Number(body.qty) || 0;
+    var reason = String(body.reason || 'Lainnya').slice(0, 40);
+    if (!body.ingredient_id || amount <= 0) {
+      return Promise.resolve(bad({ success: false, message: 'Bahan dan jumlah wajib diisi valid.' }));
+    }
+    return sel('ingredients', 'select=*&id=eq.' + encodeURIComponent(body.ingredient_id)).then(function (rows) {
+      if (!rows.length) return notFound({ success: false, message: 'Bahan tidak ditemukan di outlet ini.' });
+      var r = rows[0];
+      var nb = Math.max(0, Math.round(((Number(r.current_stock) || 0) - amount) * 1000) / 1000);
+      var totalLoss = Math.round(amount * (Number(r.cost_per_unit) || 0));
+      var entry = {
+        id: uid('wst'), ingredient_id: r.id, ingredient_name: r.name,
+        qty: amount, unit: body.unit || r.unit, cost_per_unit: Number(r.cost_per_unit) || 0,
+        total_loss: totalLoss, reason: reason,
+        note: String(body.note || '').slice(0, 200),
+        reported_by: String(body.reported_by || 'Dapur').slice(0, 60)
+      };
+      return upd('ingredients', 'id=eq.' + encodeURIComponent(r.id), { current_stock: nb })
+        .then(function () { return ins('waste_logs', [entry]); })
+        .then(function () { return ok({ success: true, totalLoss: totalLoss }); });
+    }).catch(serverError);
+  };
+
+  // 7i. GET /api/kitchen/recipes — BOM per menu (untuk SOP & foto plating).
+  routes['GET /api/kitchen/recipes'] = function () {
+    return menuScopeSel('select=id,name,image,description&order=name.asc').then(function (menus) {
+      return sel('recipes', 'select=menu_id,items').then(function (rr) {
+        return sel('ingredients', 'select=id,name,unit').then(function (ings) {
+          var ingMap = {};
+          ings.forEach(function (g) { ingMap[g.id] = g; });
+          var recMap = {};
+          rr.forEach(function (r) { recMap[r.menu_id] = r.items || []; });
+          return ok({ success: true, menus: menus.map(function (m) {
+            return {
+              id: m.id, name: m.name, image: m.image, description: m.description || '',
+              recipe: (recMap[m.id] || []).map(function (it) {
+                var g = ingMap[it.ingredientId] || {};
+                return { name: g.name || it.ingredientId, amount: it.amount, unit: it.unit || g.unit || '' };
+              })
+            };
+          }) });
+        });
+      });
+    }).catch(serverError);
+  };
+
+  // 7j. POST /api/kitchen/call-runner — { order_id }
+  //     Tandai order siap diambil pelayan (expo -> runner dispatch).
+  var _hasRunnerCol = null;
+  function ordersHasRunnerCol() {
+    if (_hasRunnerCol !== null) return Promise.resolve(_hasRunnerCol);
+    return sel('orders', 'select=runner_called_at&limit=1').then(function () {
+      _hasRunnerCol = true; return true;
+    }).catch(function (e) {
+      _hasRunnerCol = !/runner_called_at/i.test(String((e && e.message) || ''));
+      return _hasRunnerCol;
+    });
+  }
+  routes['POST /api/kitchen/call-runner'] = function (body) {
+    return ordersHasRunnerCol().then(function (has) {
+      if (!has) return bad({ success: false, message: 'Kolom runner_called_at belum ada. Jalankan SQL dulu.' });
+      return sel('orders', 'select=id&id=eq.' + encodeURIComponent(body.order_id) + '&limit=1')
+        .then(function (rows) {
+          if (!rows.length) return notFound({ success: false, message: 'Order tidak ditemukan di outlet ini.' });
+          return upd('orders', 'id=eq.' + encodeURIComponent(body.order_id), { runner_called_at: new Date().toISOString() })
+            .then(function () { return ok({ success: true }); });
+        });
+    }).catch(serverError);
+  };
+
+  // 7k. GET /api/kitchen/ingredients — stok bahan outlet perangkat dapur.
   routes['GET /api/kitchen/ingredients'] = function () {
     return sel('ingredients', 'select=id,name,current_stock,unit,min_stock_alert&order=name.asc&limit=500')
       .then(function (rows) {
@@ -2336,14 +2542,21 @@
             highlightTexture: 'Freshly baked daily', costPrice: costP
           };
           var nrow = menuItemToRow(item);
+          nrow.station = String(body.station || '').slice(0, 40);
           var newOid = body.outlet_id === 'CENTRAL' ? null : (body.outlet_id || undefined);
           if (newOid !== undefined) {
             if (chk.session.role === 'area_manager' && newOid !== null &&
                 (chk.session.outletIds || []).indexOf(newOid) < 0) menuForbidden('Outlet di luar wewenang Anda.');
             nrow.outlet_id = newOid; // null = menu pusat
-            menuOp = rawIns('menu_items', [nrow]).then(function (nr) { return nr[0]; });
+            menuOp = menuHasStation().then(function (hs) {
+              if (!hs) delete nrow.station;
+              return rawIns('menu_items', [nrow]);
+            }).then(function (nr) { return nr[0]; });
           } else {
-            menuOp = ins('menu_items', [nrow]).then(function (nr) { return nr[0]; });
+            menuOp = menuHasStation().then(function (hs) {
+              if (!hs) delete nrow.station;
+              return ins('menu_items', [nrow]);
+            }).then(function (nr) { return nr[0]; });
           }
         } else {
           var patch = {
@@ -2353,14 +2566,17 @@
           if (body.category) patch.category = body.category;
           if (body.price) { patch.price = formattedPrice; patch.price_value = parsePriceToNumber(body.price); }
           if (body.image) patch.image = body.image;
+          if (body.station !== undefined) patch.station = String(body.station || '').slice(0, 40);
           if (body.outlet_id !== undefined) {
             var eOid = body.outlet_id === 'CENTRAL' ? null : (body.outlet_id || null);
             if (chk.session.role === 'area_manager' && eOid !== null &&
                 (chk.session.outletIds || []).indexOf(eOid) < 0) menuForbidden('Outlet di luar wewenang Anda.');
             patch.outlet_id = eOid;
           }
-          menuOp = upd('menu_items', 'id=eq.' + encodeURIComponent(menuId), patch, { allOutlets: true })
-            .then(function (ur) { return ur[0]; });
+          menuOp = menuHasStation().then(function (hs) {
+            if (!hs) delete patch.station;
+            return upd('menu_items', 'id=eq.' + encodeURIComponent(menuId), patch, { allOutlets: true });
+          }).then(function (ur) { return ur[0]; });
         }
         return menuOp.then(function (row) { return { row: row, oldPv: oldPv, isNewMenu: isNewMenu }; });
       }).then(function (ctx) {
