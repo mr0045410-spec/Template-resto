@@ -822,6 +822,17 @@
     if (roles.indexOf(s.role) < 0) return { ok: false, res: forbidden({ success: false, message: 'Peran "' + s.role + '" tidak boleh memakai fitur ini.' }) };
     return { ok: true, session: s };
   }
+  // Tier peran untuk penguncian route (fase 2e)
+  var ROLE_OWNER = ['owner'];
+  var ROLE_MGR = ['owner', 'area_manager'];
+  var ROLE_ALL_MGR = ['owner', 'area_manager', 'store_manager'];
+  // Untuk route yg juga dipanggil POS tanpa sesi (mis. quick-add customer):
+  // ada sesi -> cek peran; tanpa sesi -> lolos (aliran POS).
+  function requirePortalOrOpen(roles) {
+    var s = getPortalSession();
+    if (!s || !s.id) return { ok: true, session: null };
+    return requirePortal(roles);
+  }
   function sessionCanOutlet(session, outletId) {
     if (!outletId || session.role === 'owner') return true;
     return (session.outletIds || []).indexOf(outletId) >= 0;
@@ -829,6 +840,8 @@
 
   // 2b. POST /api/owner/change-pin — { old_pin, new_pin } (4-6 digit angka).
   routes['POST /api/owner/change-pin'] = function (body) {
+    var chk = requirePortal(ROLE_OWNER);
+    if (!chk.ok) return Promise.resolve(chk.res);
     var oldPin = String(body.old_pin || '');
     var newPin = String(body.new_pin || '');
     if (!/^[0-9]{4,6}$/.test(newPin)) {
@@ -845,6 +858,8 @@
 
   // 3. POST /api/menu/toggle-stock
   routes['POST /api/menu/toggle-stock'] = function (body) {
+    var chk = requirePortal(ROLE_ALL_MGR);
+    if (!chk.ok) return Promise.resolve(chk.res);
     return sel('menu_items', 'select=*&id=eq.' + encodeURIComponent(body.id)).then(function (rows) {
       if (!rows.length) return notFound({ success: false, message: 'Item tidak ditemukan' });
       var r = rows[0];
@@ -858,6 +873,8 @@
 
   // 3b. POST /api/menu/update-stock
   routes['POST /api/menu/update-stock'] = function (body) {
+    var chk = requirePortal(ROLE_ALL_MGR);
+    if (!chk.ok) return Promise.resolve(chk.res);
     return sel('menu_items', 'select=*&id=eq.' + encodeURIComponent(body.id)).then(function (rows) {
       if (!rows.length) return notFound({ success: false, message: 'Item tidak ditemukan' });
       var r = rows[0];
@@ -872,6 +889,8 @@
 
   // 4. POST /api/menu (create)
   routes['POST /api/menu'] = function (body) {
+    var chk = requirePortal(ROLE_MGR);
+    if (!chk.ok) return Promise.resolve(chk.res);
     if (!body.name || !body.price) {
       return Promise.resolve(bad({ success: false, message: 'Nama dan harga wajib diisi' }));
     }
@@ -897,6 +916,8 @@
 
   // 5. PUT /api/menu (update)
   routes['PUT /api/menu'] = function (body) {
+    var chk = requirePortal(ROLE_MGR);
+    if (!chk.ok) return Promise.resolve(chk.res);
     return sel('menu_items', 'select=*&id=eq.' + encodeURIComponent(body.id)).then(function (rows) {
       if (!rows.length) return notFound({ success: false, message: 'Item tidak ditemukan' });
       var cur = rowToMenuItem(rows[0]);
@@ -950,6 +971,8 @@
 
   // 6. DELETE /api/menu
   routes['DELETE /api/menu'] = function (body) {
+    var chk = requirePortal(ROLE_MGR);
+    if (!chk.ok) return Promise.resolve(chk.res);
     return del('menu_items', 'id=eq.' + encodeURIComponent(body.id)).then(function (rows) {
       if (rows && rows.length) return ok({ success: true, message: 'Menu berhasil dihapus' });
       return notFound({ success: false, message: 'Item tidak ditemukan' });
@@ -1371,6 +1394,8 @@
 
   // POST /api/owner/promos — buat promo baru
   routes['POST /api/owner/promos'] = function (body) {
+    var chk = requirePortal(ROLE_MGR);
+    if (!chk.ok) return Promise.resolve(chk.res);
     var err = validatePromoInput(body || {});
     if (err) return Promise.resolve(bad({ success: false, message: err }));
     var b = body;
@@ -1401,6 +1426,8 @@
 
   // PUT /api/owner/promos — ubah promo (body.id)
   routes['PUT /api/owner/promos'] = function (body) {
+    var chk = requirePortal(ROLE_MGR);
+    if (!chk.ok) return Promise.resolve(chk.res);
     if (!body || !body.id) return Promise.resolve(bad({ success: false, message: 'ID promo wajib diisi' }));
     var patch = {};
     var map = {
@@ -1432,6 +1459,8 @@
 
   // DELETE /api/owner/promos — hapus promo (usage ikut terhapus via cascade)
   routes['DELETE /api/owner/promos'] = function (body) {
+    var chk = requirePortal(ROLE_MGR);
+    if (!chk.ok) return Promise.resolve(chk.res);
     if (!body || !body.id) return Promise.resolve(bad({ success: false, message: 'ID promo wajib diisi' }));
     return del('promos', 'id=eq.' + encodeURIComponent(body.id)).then(function (rows) {
       if (rows && rows.length) return ok({ success: true, message: 'Promo dihapus' });
@@ -1640,6 +1669,8 @@
 
   // POST /api/owner/customers — tambah pelanggan {name, phone}
   routes['POST /api/owner/customers'] = function (body) {
+    var chk = requirePortalOrOpen(ROLE_ALL_MGR);
+    if (!chk.ok) return Promise.resolve(chk.res);
     var name = String((body && body.name) || '').trim();
     var phone = String((body && body.phone) || '').trim();
     if (!name) return Promise.resolve(bad({ success: false, message: 'Nama pelanggan wajib diisi' }));
@@ -1657,6 +1688,8 @@
 
   // PUT /api/owner/customers — ubah {id, name?, phone?}
   routes['PUT /api/owner/customers'] = function (body) {
+    var chk = requirePortal(ROLE_MGR);
+    if (!chk.ok) return Promise.resolve(chk.res);
     if (!body || !body.id) return Promise.resolve(bad({ success: false, message: 'ID pelanggan wajib diisi' }));
     var patch = {};
     if (body.name !== undefined) {
@@ -1681,6 +1714,8 @@
 
   // DELETE /api/owner/customers — hapus {id}
   routes['DELETE /api/owner/customers'] = function (body) {
+    var chk = requirePortal(ROLE_MGR);
+    if (!chk.ok) return Promise.resolve(chk.res);
     if (!body || !body.id) return Promise.resolve(bad({ success: false, message: 'ID pelanggan wajib diisi' }));
     return del('customers', 'id=eq.' + encodeURIComponent(body.id)).then(function (rows) {
       if (rows && rows.length) return ok({ success: true, message: 'Pelanggan dihapus' });
@@ -1690,6 +1725,8 @@
 
   // POST /api/owner/customers/adjust — koreksi poin manual {id, points(+/-), note}
   routes['POST /api/owner/customers/adjust'] = function (body) {
+    var chk = requirePortal(ROLE_ALL_MGR);
+    if (!chk.ok) return Promise.resolve(chk.res);
     if (!body || !body.id) return Promise.resolve(bad({ success: false, message: 'ID pelanggan wajib diisi' }));
     var delta = Math.trunc(Number(body.points) || 0);
     if (!delta) return Promise.resolve(bad({ success: false, message: 'Jumlah poin tidak valid' }));
@@ -1863,6 +1900,8 @@
 
   // 11. POST /api/owner/set-cost
   routes['POST /api/owner/set-cost'] = function (body) {
+    var chk = requirePortal(ROLE_MGR);
+    if (!chk.ok) return Promise.resolve(chk.res);
     return upd('menu_items', 'id=eq.' + encodeURIComponent(body.id),
       { cost_price: Math.max(0, Math.floor(Number(body.costPrice) || 0)), updated_at: new Date().toISOString() })
       .then(function (rows) {
@@ -1914,6 +1953,8 @@
 
   // 15. POST /api/owner/ingredients/restock
   routes['POST /api/owner/ingredients/restock'] = function (body) {
+    var chk = requirePortal(ROLE_ALL_MGR);
+    if (!chk.ok) return Promise.resolve(chk.res);
     return sel('ingredients', 'select=*&id=eq.' + encodeURIComponent(body.id)).then(function (rows) {
       if (!rows.length) return notFound({ success: false, message: 'Bahan baku tidak ditemukan' });
       var r = rows[0];
@@ -1943,6 +1984,8 @@
 
   // 15b. POST /api/owner/ingredients/waste
   routes['POST /api/owner/ingredients/waste'] = function (body) {
+    var chk = requirePortal(ROLE_ALL_MGR);
+    if (!chk.ok) return Promise.resolve(chk.res);
     var amount = Number(body.qty) || 0;
     if (!body.ingredientId || amount <= 0) {
       return Promise.resolve(bad({ success: false, message: 'Bahan dan jumlah terbuang wajib diisi valid' }));
@@ -1989,6 +2032,8 @@
 
   // 15c. POST /api/owner/ingredients/waste/delete
   routes['POST /api/owner/ingredients/waste/delete'] = function (body) {
+    var chk = requirePortal(ROLE_ALL_MGR);
+    if (!chk.ok) return Promise.resolve(chk.res);
     return del('waste_logs', 'id=eq.' + encodeURIComponent(body.id)).then(function (rows) {
       if (rows && rows.length) return ok({ success: true, message: 'Catatan waste berhasil dihapus' });
       return notFound({ success: false, message: 'Catatan waste tidak ditemukan' });
@@ -1997,6 +2042,8 @@
 
   // 16. POST /api/owner/ingredients/update
   routes['POST /api/owner/ingredients/update'] = function (body) {
+    var chk = requirePortal(ROLE_MGR);
+    if (!chk.ok) return Promise.resolve(chk.res);
     var patch = {};
     if (body.name) patch.name = body.name;
     if (body.category) patch.category = body.category;
@@ -2013,6 +2060,8 @@
 
   // 17. POST /api/owner/ingredients/add
   routes['POST /api/owner/ingredients/add'] = function (body) {
+    var chk = requirePortal(ROLE_MGR);
+    if (!chk.ok) return Promise.resolve(chk.res);
     if (!body.name || !body.unit) {
       return Promise.resolve(bad({ success: false, message: 'Nama bahan dan satuan wajib diisi' }));
     }
@@ -2028,6 +2077,8 @@
 
   // 18. POST /api/owner/ingredients/delete
   routes['POST /api/owner/ingredients/delete'] = function (body) {
+    var chk = requirePortal(ROLE_MGR);
+    if (!chk.ok) return Promise.resolve(chk.res);
     return del('ingredients', 'id=eq.' + encodeURIComponent(body.id)).then(function (rows) {
       if (rows && rows.length) return ok({ success: true, message: 'Bahan baku berhasil dihapus' });
       return notFound({ success: false, message: 'Bahan baku tidak ditemukan' });
@@ -2036,6 +2087,8 @@
 
   // 19. POST /api/owner/recipes/update
   routes['POST /api/owner/recipes/update'] = function (body) {
+    var chk = requirePortal(ROLE_MGR);
+    if (!chk.ok) return Promise.resolve(chk.res);
     if (!body.name) return Promise.resolve(bad({ success: false, message: 'Nama menu wajib diisi' }));
     var menuId = (body.menuId && !body.isNew) ? body.menuId : uid('menu');
     return sel('ingredients', 'select=id,unit,cost_per_unit').then(function (ingRows) {
@@ -2864,6 +2917,8 @@
 
   // 28. POST /api/owner/accounts/upsert — tambah / edit akun. body: {code, name, type, normal}
   routes['POST /api/owner/accounts/upsert'] = function (body) {
+    var chk = requirePortal(ROLE_OWNER);
+    if (!chk.ok) return Promise.resolve(chk.res);
     return needAccounting().then(function (blocked) {
       if (blocked) return blocked;
       var code = String(body.code || '').trim();
@@ -2889,6 +2944,8 @@
 
   // 29. POST /api/owner/accounts/set-active — {code, active}
   routes['POST /api/owner/accounts/set-active'] = function (body) {
+    var chk = requirePortal(ROLE_OWNER);
+    if (!chk.ok) return Promise.resolve(chk.res);
     return needAccounting().then(function (blocked) {
       if (blocked) return blocked;
       if (!body.code) return bad({ success: false, message: 'Kode akun wajib diisi' });
@@ -2902,6 +2959,8 @@
 
   // 30. POST /api/owner/journal/manual — {entry_date?, description, lines:[{account_code,debit,kredit}], created_by?}
   routes['POST /api/owner/journal/manual'] = function (body) {
+    var chk = requirePortal(ROLE_OWNER);
+    if (!chk.ok) return Promise.resolve(chk.res);
     return needAccounting().then(function (blocked) {
       if (blocked) return blocked;
       var desc = String(body.description || '').trim();
@@ -3052,6 +3111,8 @@
   // 34. POST /api/owner/journal/backfill — buat jurnal utk order/waste/restock lama yg belum punya.
   //     Idempotent: ref_type+ref_id yg sudah ada dilewati.
   routes['POST /api/owner/journal/backfill'] = function (body) {
+    var chk = requirePortal(ROLE_OWNER);
+    if (!chk.ok) return Promise.resolve(chk.res);
     return needAccounting().then(function (blocked) {
       if (blocked) return blocked;
       return sel('journal_entries', 'select=ref_type,ref_id&limit=20000').then(function (existing) {
@@ -3161,6 +3222,8 @@
 
   // 36. POST /api/owner/suppliers/upsert — {id?, name, phone?, address?}
   routes['POST /api/owner/suppliers/upsert'] = function (body) {
+    var chk = requirePortal(ROLE_MGR);
+    if (!chk.ok) return Promise.resolve(chk.res);
     return needAccounting().then(function (blocked) {
       if (blocked) return blocked;
       var name = String(body.name || '').trim();
@@ -3180,6 +3243,8 @@
 
   // 37. POST /api/owner/suppliers/set-active — {id, active}
   routes['POST /api/owner/suppliers/set-active'] = function (body) {
+    var chk = requirePortal(ROLE_MGR);
+    if (!chk.ok) return Promise.resolve(chk.res);
     return needAccounting().then(function (blocked) {
       if (blocked) return blocked;
       if (!body.id) return bad({ success: false, message: 'ID supplier wajib diisi' });
@@ -3226,6 +3291,8 @@
   // 39. POST /api/owner/purchase-orders/create — {supplier_id, items:[{ingredient_id, qty, unit_price}], notes?, created_by?}
   //     Nomor PO atomic via next_po_seq (counter terpisah, tidak pakai order_counters).
   routes['POST /api/owner/purchase-orders/create'] = function (body) {
+    var chk = requirePortal(ROLE_MGR);
+    if (!chk.ok) return Promise.resolve(chk.res);
     return needAccounting().then(function (blocked) {
       if (blocked) return blocked;
       if (!body.supplier_id) return bad({ success: false, message: 'Supplier wajib dipilih' });
@@ -3281,6 +3348,8 @@
 
   // 40. POST /api/owner/purchase-orders/send — {id}: draft -> sent
   routes['POST /api/owner/purchase-orders/send'] = function (body) {
+    var chk = requirePortal(ROLE_MGR);
+    if (!chk.ok) return Promise.resolve(chk.res);
     return needAccounting().then(function (blocked) {
       if (blocked) return blocked;
       if (!body.id) return bad({ success: false, message: 'ID PO wajib diisi' });
@@ -3298,6 +3367,8 @@
   //     sent -> received: tambah stok bahan, stock_logs IN_PURCHASE,
   //     jurnal Dr 1200 / Cr 1100 (tunai) atau Cr 2100 (kredit).
   routes['POST /api/owner/purchase-orders/receive'] = function (body) {
+    var chk = requirePortal(ROLE_ALL_MGR);
+    if (!chk.ok) return Promise.resolve(chk.res);
     return needAccounting().then(function (blocked) {
       if (blocked) return blocked;
       if (!body.id) return bad({ success: false, message: 'ID PO wajib diisi' });
@@ -3357,6 +3428,8 @@
 
   // 42. POST /api/owner/purchase-orders/cancel — {id}: hanya draft/sent
   routes['POST /api/owner/purchase-orders/cancel'] = function (body) {
+    var chk = requirePortal(ROLE_MGR);
+    if (!chk.ok) return Promise.resolve(chk.res);
     return needAccounting().then(function (blocked) {
       if (blocked) return blocked;
       if (!body.id) return bad({ success: false, message: 'ID PO wajib diisi' });
@@ -3403,6 +3476,8 @@
   // 43. PUT /api/owner/settings — { tax_rate, service_rate, tax_label, service_label }
   //     owner_pin SENGAJA tidak bisa diubah lewat route ini.
   routes['PUT /api/owner/settings'] = function (body) {
+    var chk = requirePortal(ROLE_OWNER);
+    if (!chk.ok) return Promise.resolve(chk.res);
     return needSettings().then(function (blocked) {
       if (blocked) return blocked;
       var ops = [];
