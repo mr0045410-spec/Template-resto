@@ -3206,6 +3206,7 @@
     }
     async function submitOutletForm() {
       const id = document.getElementById('outlet-id').value;
+      const isNew = !id;
       const name = document.getElementById('outlet-name').value.trim();
       const address = document.getElementById('outlet-address').value.trim();
       const phone = document.getElementById('outlet-phone').value.trim();
