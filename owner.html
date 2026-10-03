@@ -3,7 +3,7 @@
 <head>
   <script src="brand-config.js"></script>
   <script>window.__mykitchenOutletKey = 'mykitchen_owner_outlet_filter';</script>
-  <script src="api-supabase.js?v=20261004a"></script>
+  <script src="api-supabase.js?v=20261004b"></script>
   <!-- api-shim: ganti /api/* dgn localStorage (perbaikan persistensi utk hosting statis) -->
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
@@ -948,6 +948,41 @@
               <tr><td colspan="6" class="py-6 text-center text-stone-400">Memuat...</td></tr>
             </tbody>
           </table>
+        </div>
+      </div>
+
+      <!-- Section 7a: Riwayat Stock Opname -->
+      <div class="bg-white rounded-3xl border border-stone-200/80 shadow-xs overflow-hidden">
+        <div class="p-5 sm:p-6 border-b border-stone-100 flex flex-col md:flex-row md:items-center justify-between gap-4">
+          <div>
+            <h3 class="text-base font-extrabold text-[#450A0A] flex items-center gap-2">
+              <i data-lucide="clipboard-check" class="w-5 h-5 text-sky-600"></i>
+              <span>Stock Opname</span>
+            </h3>
+            <p class="text-xs text-stone-500">Bandingkan stok fisik vs sistem, selisih otomatis disesuaikan</p>
+          </div>
+          <button onclick="openOpnameModal()" class="inline-flex items-center gap-1.5 px-3.5 py-2 rounded-xl bg-sky-600 hover:bg-sky-700 text-white text-xs font-bold shadow-xs transition-colors">
+            <i data-lucide="plus" class="w-3.5 h-3.5"></i>
+            <span>Opname Baru</span>
+          </button>
+        </div>
+        <div id="opname-history" class="divide-y divide-stone-100 max-h-[320px] overflow-y-auto">
+          <div class="p-6 text-center text-stone-400 text-xs">Memuat...</div>
+        </div>
+      </div>
+
+      <!-- Section 7b: Antrean Persetujuan Belanja -->
+      <div id="approval-section" class="bg-white rounded-3xl border border-stone-200/80 shadow-xs overflow-hidden">
+        <div class="p-5 sm:p-6 border-b border-stone-100">
+          <h3 class="text-base font-extrabold text-[#450A0A] flex items-center gap-2">
+            <i data-lucide="shield-check" class="w-5 h-5 text-emerald-600"></i>
+            <span>Menunggu Persetujuan</span>
+            <span id="approval-count" class="ml-1 px-2 py-0.5 rounded-full bg-amber-100 text-amber-700 text-[10px] font-black">0</span>
+          </h3>
+          <p class="text-xs text-stone-500">Belanja di atas batas butuh persetujuan Owner / Area Manager</p>
+        </div>
+        <div id="approval-list" class="divide-y divide-stone-100 max-h-[320px] overflow-y-auto">
+          <div class="p-6 text-center text-stone-400 text-xs">Memuat...</div>
         </div>
       </div>
 
@@ -2963,6 +2998,58 @@
           </div>
         </div>
 
+  <!-- Modal Resep Bahan Olahan -->
+  <div id="prep-recipe-modal" class="hidden fixed inset-0 z-50 flex items-center justify-center p-4 bg-[#450A0A]/80 backdrop-blur-sm">
+    <div class="w-full max-w-lg bg-white rounded-3xl p-6 shadow-2xl border border-stone-200 max-h-[92vh] overflow-y-auto">
+      <div class="flex items-center justify-between pb-3 border-b border-stone-100">
+        <div class="flex items-center gap-2.5">
+          <div class="w-9 h-9 rounded-2xl bg-purple-100 text-purple-700 flex items-center justify-center">
+            <i data-lucide="cooking-pot" class="w-5 h-5"></i>
+          </div>
+          <div>
+            <h4 id="prep-recipe-title" class="text-sm font-extrabold text-[#450A0A]">Resep Bahan Olahan</h4>
+            <span id="prep-recipe-desc" class="text-[10px] text-stone-400"></span>
+          </div>
+        </div>
+        <button onclick="closePrepRecipeModal()" class="p-1 rounded-full text-stone-400 hover:text-stone-700">
+          <i data-lucide="x" class="w-4 h-4"></i>
+        </button>
+      </div>
+      <div class="mt-4">
+        <div class="text-xs font-bold text-stone-700 mb-2">Untuk membuat 1 <span class="text-stone-400">(satuan bahan)</span> butuh:</div>
+        <div id="prep-recipe-rows" class="space-y-2"></div>
+        <button type="button" onclick="addPrepRecipeRow()" class="mt-2 inline-flex items-center gap-1 px-3 py-1.5 rounded-lg bg-stone-100 hover:bg-stone-200 text-stone-700 text-xs font-bold">
+          <i data-lucide="plus" class="w-3.5 h-3.5"></i> Tambah Bahan
+        </button>
+      </div>
+      <button onclick="savePrepRecipe()" class="mt-4 w-full py-2.5 rounded-xl bg-purple-600 hover:bg-purple-700 text-white text-xs font-extrabold transition-colors">Simpan Resep</button>
+    </div>
+  </div>
+
+  <!-- Modal Stock Opname -->
+  <div id="opname-modal" class="hidden fixed inset-0 z-50 flex items-center justify-center p-4 bg-[#450A0A]/80 backdrop-blur-sm">
+    <div class="w-full max-w-2xl bg-white rounded-3xl p-6 shadow-2xl border border-stone-200 max-h-[92vh] flex flex-col">
+      <div class="flex items-center justify-between pb-3 border-b border-stone-100">
+        <div class="flex items-center gap-2.5">
+          <div class="w-9 h-9 rounded-2xl bg-sky-100 text-sky-700 flex items-center justify-center">
+            <i data-lucide="clipboard-check" class="w-5 h-5"></i>
+          </div>
+          <div>
+            <h4 class="text-sm font-extrabold text-[#450A0A]">Stock Opname</h4>
+            <span class="text-[10px] text-stone-400">Isi stok fisik, selisih otomatis dihitung</span>
+          </div>
+        </div>
+        <button onclick="closeOpnameModal()" class="p-1 rounded-full text-stone-400 hover:text-stone-700">
+          <i data-lucide="x" class="w-4 h-4"></i>
+        </button>
+      </div>
+      <form onsubmit="submitOpname(event)" class="mt-4 flex flex-col min-h-0 flex-1">
+        <div id="opname-rows" class="space-y-2 overflow-y-auto pr-1 flex-1 min-h-0"></div>
+        <button type="submit" class="mt-4 w-full py-2.5 rounded-xl bg-sky-600 hover:bg-sky-700 text-white text-xs font-extrabold transition-colors shrink-0">Simpan Opname</button>
+      </form>
+    </div>
+  </div>
+
   <!-- Modal Batch Prep -->
   <div id="prep-modal" class="hidden fixed inset-0 z-50 flex items-center justify-center p-4 bg-[#450A0A]/80 backdrop-blur-sm">
     <div class="w-full max-w-lg bg-white rounded-3xl p-6 shadow-2xl border border-stone-200 max-h-[92vh] overflow-y-auto">
@@ -3541,8 +3628,208 @@
         loadPasarHistory();
         loadPrepHistory();
         loadApprovals();
+        loadOpnameHistory();
       }
       lucide.createIcons();
+    }
+
+    // ===== Approval Belanja =====
+    async function loadApprovals() {
+      const box = document.getElementById('approval-list');
+      const cnt = document.getElementById('approval-count');
+      if (!box) return;
+      try {
+        const res = await fetch('/api/owner/approvals');
+        const d = await res.json();
+        const list = (d.success && d.approvals) || [];
+        if (cnt) cnt.textContent = list.length;
+        if (!list.length) {
+          box.innerHTML = '<div class="p-6 text-center text-stone-400 text-xs">Tidak ada pengajuan menunggu.</div>';
+          return;
+        }
+        box.innerHTML = list.map(a => {
+          const p = a.payload || {};
+          const nama = p.ingredient_name || '-';
+          return `
+          <div class="p-4 flex flex-col sm:flex-row sm:items-center gap-3">
+            <div class="flex-1 min-w-0">
+              <div class="font-extrabold text-[#450A0A] text-xs">${escapeOwnerHtml(nama)} <span class="font-mono">${p.qty} ${escapeOwnerHtml(p.unit || '')}</span></div>
+              <div class="text-[11px] text-stone-500">Rp ${Number(a.totalCost).toLocaleString('id-ID')} \u2022 oleh ${escapeOwnerHtml(a.requestedBy)} \u2022 ${fmtShiftDate(a.requestedAt)}</div>
+              ${p.note ? `<div class="text-[11px] text-stone-400 italic">${escapeOwnerHtml(p.note)}</div>` : ''}
+            </div>
+            <div class="flex gap-2 shrink-0">
+              <button onclick="decideApproval('${a.id}','approve')" class="px-3.5 py-2 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-extrabold">Setujui</button>
+              <button onclick="decideApproval('${a.id}','reject')" class="px-3.5 py-2 rounded-xl bg-stone-100 hover:bg-stone-200 text-stone-600 text-xs font-extrabold">Tolak</button>
+            </div>
+          </div>`;
+        }).join('');
+      } catch (e) {
+        box.innerHTML = '<div class="p-6 text-center text-stone-400 text-xs">Gagal memuat.</div>';
+      }
+    }
+    async function decideApproval(id, decision) {
+      if (!confirm(decision === 'approve' ? 'Setujui belanja ini? Stok akan bertambah.' : 'Tolak pengajuan ini?')) return;
+      try {
+        const res = await fetch('/api/owner/approvals/decide', {
+          method: 'POST', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ id, decision })
+        });
+        const d = await res.json();
+        if (d.success) {
+          toast(d.message || 'Berhasil.', 'ok');
+          loadApprovals(); loadIngredientsData(); loadPasarHistory();
+        } else toast(d.message || 'Gagal.', 'error');
+      } catch (e) { toast('Jaringan bermasalah.', 'error'); }
+    }
+
+    // ===== Resep Bahan Olahan (Prep Recipe) =====
+    let prepRecipeIngId = null;
+    let prepRecipeRows = [];
+    async function openPrepRecipeModal(ingId, ingName) {
+      prepRecipeIngId = ingId;
+      prepRecipeRows = [];
+      document.getElementById('prep-recipe-title').textContent = 'Resep: ' + ingName;
+      document.getElementById('prep-recipe-desc').textContent = 'Jika stok "' + ingName + '" habis saat jual, bahan di bawah otomatis dipotong sebagai gantinya.';
+      try {
+        const res = await fetch('/api/owner/ingredient-recipes?ingredient_id=' + encodeURIComponent(ingId));
+        const d = await res.json();
+        const r = (d.success && d.recipes && d.recipes[0]) || null;
+        if (r && r.items) {
+          prepRecipeRows = r.items.map(x => ({
+            ingredientId: x.ingredientId, amount: x.amount, unit: x.unit || '', loss_pct: Number(x.loss_pct) || 0
+          }));
+        }
+      } catch (e) {}
+      if (!prepRecipeRows.length && allIngredientsList.length) {
+        prepRecipeRows = [{ ingredientId: allIngredientsList[0].id, amount: 0.1, unit: '', loss_pct: 0 }];
+      }
+      renderPrepRecipeRows();
+      document.getElementById('prep-recipe-modal').classList.remove('hidden');
+      lucide.createIcons();
+    }
+    function closePrepRecipeModal() { document.getElementById('prep-recipe-modal').classList.add('hidden'); }
+    function renderPrepRecipeRows() {
+      const box = document.getElementById('prep-recipe-rows');
+      const ingMap = {};
+      (allIngredientsList || []).forEach(i => { ingMap[i.id] = i; });
+      box.innerHTML = prepRecipeRows.map((row, idx) => {
+        if (row.ingredientId === prepRecipeIngId) row.ingredientId = '';
+        const opts = (allIngredientsList || []).filter(i => i.id !== prepRecipeIngId).map(i =>
+          `<option value="${i.id}" ${i.id === row.ingredientId ? 'selected' : ''}>${escapeOwnerHtml(i.name)} (${escapeOwnerHtml(i.unit || '')})</option>`).join('');
+        return `
+        <div class="flex items-center gap-2 bg-stone-50 p-2.5 rounded-2xl border border-stone-200">
+          <select onchange="prepRecipeRows[${idx}].ingredientId=this.value" class="flex-1 min-w-0 py-1.5 px-2 rounded-xl border border-stone-300 bg-white text-xs focus:border-brand focus:outline-none">${opts}</select>
+          <input type="number" step="any" min="0.0001" value="${row.amount}" oninput="prepRecipeRows[${idx}].amount=this.value"
+                 class="w-24 px-2 py-1.5 rounded-xl border border-stone-300 text-xs font-mono font-bold focus:border-brand focus:outline-none" placeholder="Qty">
+          <button type="button" onclick="prepRecipeRows.splice(${idx},1);renderPrepRecipeRows()" class="p-1.5 text-stone-400 hover:text-rose-600">×</button>
+        </div>`;
+      }).join('');
+    }
+    function addPrepRecipeRow() {
+      const avail = (allIngredientsList || []).find(i => i.id !== prepRecipeIngId);
+      prepRecipeRows.push({ ingredientId: avail ? avail.id : '', amount: 0.1, unit: '', loss_pct: 0 });
+      renderPrepRecipeRows();
+    }
+    async function savePrepRecipe() {
+      const items = prepRecipeRows.filter(r => r.ingredientId && (Number(r.amount) || 0) > 0);
+      try {
+        const res = await fetch('/api/owner/ingredient-recipes/update', {
+          method: 'POST', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ ingredient_id: prepRecipeIngId, items })
+        });
+        const d = await res.json();
+        if (d.success) { toast('Resep bahan olahan tersimpan.', 'ok'); closePrepRecipeModal(); }
+        else toast(d.message || 'Gagal.', 'error');
+      } catch (e) { toast('Jaringan bermasalah.', 'error'); }
+    }
+
+    // ===== Stock Opname =====
+    function openOpnameModal() {
+      const cur = getOwnerOutletId();
+      const list = (allIngredientsList || []).filter(i => !cur || cur === 'ALL' || (i.outletId || i.outlet_id) === cur);
+      const box = document.getElementById('opname-rows');
+      box.innerHTML = list.map((ing, idx) => {
+        const sys = Number(ing.currentStock ?? ing.current_stock) || 0;
+        return `
+        <div class="flex items-center gap-2 bg-stone-50 p-2.5 rounded-2xl border border-stone-200">
+          <div class="flex-1 min-w-0">
+            <div class="font-bold text-xs text-[#450A0A] truncate">${escapeOwnerHtml(ing.name)}</div>
+            <div class="text-[10px] text-stone-400 font-mono">Sistem: ${sys} ${escapeOwnerHtml(ing.unit || '')}</div>
+          </div>
+          <input type="number" step="any" min="0" value="${sys}" data-ing="${ing.id}" data-sys="${sys}"
+                 oninput="updateOpnameVar(this)"
+                 class="opname-phys w-24 px-2 py-1.5 rounded-xl border border-stone-300 text-xs font-mono font-bold focus:border-brand focus:outline-none">
+          <div class="opname-var w-20 text-right text-[11px] font-mono font-bold text-stone-400">0</div>
+        </div>`;
+      }).join('') || '<div class="p-6 text-center text-stone-400 text-xs">Tidak ada bahan.</div>';
+      document.getElementById('opname-modal').classList.remove('hidden');
+      lucide.createIcons();
+    }
+    function closeOpnameModal() { document.getElementById('opname-modal').classList.add('hidden'); }
+    function updateOpnameVar(el) {
+      const sys = Number(el.dataset.sys) || 0;
+      const phys = Number(el.value);
+      const v = isNaN(phys) ? 0 : Math.round((phys - sys) * 1000) / 1000;
+      const div = el.parentElement.querySelector('.opname-var');
+      div.textContent = (v > 0 ? '+' : '') + v;
+      div.className = 'opname-var w-20 text-right text-[11px] font-mono font-bold ' + (v > 0 ? 'text-emerald-600' : v < 0 ? 'text-rose-600' : 'text-stone-400');
+    }
+    async function submitOpname(e) {
+      e.preventDefault();
+      const items = [];
+      document.querySelectorAll('.opname-phys').forEach(el => {
+        const phys = Number(el.value);
+        if (isNaN(phys) || phys < 0) return;
+        items.push({ ingredient_id: el.dataset.ing, physical_stock: phys });
+      });
+      if (!items.length) { toast('Tidak ada item.', 'warn'); return; }
+      if (!confirm('Simpan opname ' + items.length + ' bahan? Stok sistem akan disesuaikan.')) return;
+      const cur = getOwnerOutletId();
+      try {
+        const res = await fetch('/api/owner/opname', {
+          method: 'POST', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            outlet_id: (cur && cur !== 'ALL') ? cur : undefined,
+            items
+          })
+        });
+        const d = await res.json();
+        if (d.success) {
+          toast('Opname ' + d.code + ' tersimpan.', 'ok');
+          closeOpnameModal();
+          loadOpnameHistory(); loadIngredientsData();
+        } else toast(d.message || 'Gagal.', 'error');
+      } catch (err) { toast('Jaringan bermasalah.', 'error'); }
+    }
+    async function loadOpnameHistory() {
+      const box = document.getElementById('opname-history');
+      if (!box) return;
+      try {
+        let q = '';
+        const cur = getOwnerOutletId();
+        if (cur && cur !== 'ALL') q = '?outlet_id=' + encodeURIComponent(cur);
+        const res = await fetch('/api/owner/opnames' + q);
+        const d = await res.json();
+        const list = (d.success && d.opnames) || [];
+        box.innerHTML = list.length ? list.map(o => {
+          const totVar = (o.items || []).reduce((s, x) => s + (Number(x.varianceCost) || 0), 0);
+          const rows = (o.items || []).filter(x => Number(x.variance) !== 0);
+          return `
+          <div class="p-4">
+            <div class="flex items-center justify-between gap-2">
+              <div class="font-extrabold text-xs text-[#450A0A]">${escapeOwnerHtml(o.code || o.id)}</div>
+              <div class="text-[10px] text-stone-400">${fmtShiftDate(o.createdAt)} \u2022 ${escapeOwnerHtml(o.picName)}</div>
+            </div>
+            ${rows.length ? `<div class="mt-2 space-y-1">` + rows.map(x => `
+              <div class="flex justify-between text-[11px]">
+                <span class="text-stone-600">${escapeOwnerHtml(x.ingredientName)} <span class="font-mono text-stone-400">${x.systemStock}→${x.physicalStock} ${escapeOwnerHtml(x.unit)}</span></span>
+                <span class="font-mono font-bold ${x.variance > 0 ? 'text-emerald-600' : 'text-rose-600'}">${x.variance > 0 ? '+' : ''}${x.variance} (Rp ${Number(x.varianceCost).toLocaleString('id-ID')})</span>
+              </div>`).join('') + `</div>` : '<div class="text-[11px] text-stone-400 mt-1">Tidak ada selisih.</div>'}
+            <div class="mt-1 text-right text-[11px] font-bold ${totVar >= 0 ? 'text-emerald-600' : 'text-rose-600'}">Total selisih: Rp ${totVar.toLocaleString('id-ID')}</div>
+          </div>`;
+        }).join('')
+        : '<div class="p-6 text-center text-stone-400 text-xs">Belum ada opname.</div>';
+      } catch (e) { box.innerHTML = '<div class="p-6 text-center text-stone-400 text-xs">Gagal memuat.</div>'; }
     }
 
     // ===== Batch Prep =====
@@ -5556,6 +5843,10 @@
                         class="p-1 rounded-lg bg-stone-100 hover:bg-stone-200 text-stone-600 border border-stone-200 transition-colors" title="Edit Detail">
                   <i data-lucide="pencil" class="w-3.5 h-3.5"></i>
                 </button>
+                <button onclick="openPrepRecipeModal('${item.id}', '${item.name.replace(/'/g, "\\'")}')" 
+                        class="p-1 rounded-lg bg-purple-50 hover:bg-purple-100 text-purple-600 border border-purple-200 transition-colors" title="Resep Bahan Olahan (untuk potong otomatis saat stok habis)">
+                  <i data-lucide="cooking-pot" class="w-3.5 h-3.5"></i>
+                </button>
                 <button onclick="deleteIngredient('${item.id}')" 
                         class="p-1 rounded-lg bg-rose-50 hover:bg-rose-100 text-rose-600 border border-rose-200 transition-colors" title="Hapus">
                   <i data-lucide="trash-2" class="w-3.5 h-3.5"></i>
@@ -5954,7 +6245,9 @@
         editingRecipeRows = existing.map(r => ({
           ingredientId: r.ingredientId,
           amount: r.amount,
-          channel: r.channel || ''
+          unit: r.unit || '',
+          channel: r.channel || '',
+          loss_pct: Number(r.loss_pct) || 0
         }));
       } else {
         // Start with 1 default row if no recipe yet
@@ -6013,14 +6306,29 @@
               </select>
             </div>
 
-            <!-- Amount input with unit badge -->
-            <div class="relative w-32 shrink-0">
-              <input type="number" step="any" min="0.0001" value="${row.amount}" 
-                     oninput="updateRecipeRow(${idx}, 'amount', this.value)" 
+            <!-- Amount input -->
+            <div class="w-24 shrink-0">
+              <input type="number" step="any" min="0.0001" value="${row.amount}"
+                     oninput="updateRecipeRow(${idx}, 'amount', this.value)"
                      placeholder="0"
-                     class="w-full pl-2.5 pr-12 py-1.5 font-mono font-bold text-xs rounded-xl border border-stone-300 bg-white focus:border-brand focus:outline-none">
-              <span class="absolute right-2.5 top-1/2 -translate-y-1/2 text-[10px] font-bold text-stone-400 uppercase">${unit}</span>
+                     class="w-full px-2.5 py-1.5 font-mono font-bold text-xs rounded-xl border border-stone-300 bg-white focus:border-brand focus:outline-none">
             </div>
+
+            <!-- Unit selector (kosongkan = ikut satuan bahan) -->
+            <select onchange="updateRecipeRow(${idx}, 'unit', this.value)" title="Satuan jumlah (kosongkan = ikut satuan bahan)"
+                    class="w-20 shrink-0 py-1.5 px-1.5 rounded-xl border border-stone-300 bg-white text-[10px] font-bold focus:border-brand focus:outline-none">
+              <option value="" ${!row.unit ? 'selected' : ''}>${unit}</option>
+              <option value="kg" ${row.unit === 'kg' ? 'selected' : ''}>kg</option>
+              <option value="g" ${row.unit === 'g' ? 'selected' : ''}>g</option>
+              <option value="l" ${row.unit === 'l' ? 'selected' : ''}>l</option>
+              <option value="ml" ${row.unit === 'ml' ? 'selected' : ''}>ml</option>
+              <option value="sdm" ${row.unit === 'sdm' ? 'selected' : ''}>sdm</option>
+              <option value="sdt" ${row.unit === 'sdt' ? 'selected' : ''}>sdt</option>
+              <option value="pcs" ${row.unit === 'pcs' ? 'selected' : ''}>pcs</option>
+              <option value="butir" ${row.unit === 'butir' ? 'selected' : ''}>butir</option>
+              <option value="lembar" ${row.unit === 'lembar' ? 'selected' : ''}>lembar</option>
+              <option value="siung" ${row.unit === 'siung' ? 'selected' : ''}>siung</option>
+            </select>
 
             <!-- Subtotal cost preview for this row -->
             <div class="w-24 text-right font-mono font-bold text-stone-700 text-xs shrink-0" title="Biaya per porsi">
@@ -6034,6 +6342,14 @@
               <option value="takeaway" ${row.channel === 'takeaway' ? 'selected' : ''}>Bungkus</option>
               <option value="delivery" ${row.channel === 'delivery' ? 'selected' : ''}>Ojol</option>
             </select>
+
+            <!-- Loss% susut masak -->
+            <div class="relative w-20 shrink-0" title="Susut masak (%) — mis. goreng susut 10%">
+              <input type="number" min="0" max="100" step="0.5" value="${row.loss_pct || 0}"
+                     oninput="updateRecipeRow(${idx}, 'loss_pct', this.value)"
+                     class="w-full pl-2 pr-7 py-1.5 font-mono font-bold text-xs rounded-xl border border-stone-300 bg-white focus:border-brand focus:outline-none">
+              <span class="absolute right-2 top-1/2 -translate-y-1/2 text-[10px] font-bold text-stone-400">%</span>
+            </div>
 
             <!-- Delete button -->
             <button type="button" onclick="removeRecipeRow(${idx})" class="p-1.5 text-stone-400 hover:text-rose-600 rounded-lg hover:bg-rose-50 transition-colors shrink-0" title="Hapus bahan ini">
@@ -6052,7 +6368,9 @@
       editingRecipeRows.push({
         ingredientId: defaultId,
         amount: 0.05,
-        channel: ''
+        unit: '',
+        channel: '',
+        loss_pct: 0
       });
       renderRecipeFormRows();
     }
