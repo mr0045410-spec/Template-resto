@@ -401,6 +401,148 @@
     });
   }
 
+  // Helper: baca satu key settings (null bila tidak ada).
+  function getSetting(key) {
+    return sel('settings', 'select=value&key=eq.' + encodeURIComponent(key)).then(function (rows) {
+      if (rows && rows.length && rows[0].value !== undefined && rows[0].value !== null) return String(rows[0].value);
+      return null;
+    }).catch(function () { return null; });
+  }
+
+  /* ================================================================== */
+  /* Portal login: username + password, sesi peran (fase 2a)              */
+  /* Peran: owner | area_manager | store_manager | kasir. Kasir DITOLAK   */
+  /* masuk portal (cuma bisa POS). Owner = 1 akun khusus                  */
+  /* (settings.owner_username + settings.owner_password_hash); migrasi    */
+  /* otomatis dari owner_pin lama saat login pertama. Sesi per tab        */
+  /* (sessionStorage) supaya tidak bocor ke tab POS.                      */
+  /* ================================================================== */
+  function forbidden(d) { return json(d, 403); }
+
+  function genSaltHex(n) {
+    var arr = new Uint8Array(n || 16);
+    if (window.crypto && window.crypto.getRandomValues) window.crypto.getRandomValues(arr);
+    else for (var i = 0; i < arr.length; i++) arr[i] = Math.floor(Math.random() * 256);
+    return Array.prototype.map.call(arr, function (b) { return ('0' + b.toString(16)).slice(-2); }).join('');
+  }
+  function sha256Hex(str) {
+    if (!(window.crypto && window.crypto.subtle && window.crypto.subtle.digest)) {
+      return Promise.reject(new Error('Browser tidak mendukung crypto.subtle (butuh HTTPS).'));
+    }
+    return window.crypto.subtle.digest('SHA-256', new TextEncoder().encode(String(str))).then(function (buf) {
+      return Array.prototype.map.call(new Uint8Array(buf), function (b) { return ('0' + b.toString(16)).slice(-2); }).join('');
+    });
+  }
+  // Format simpan: "salt$hex". Jangan pernah kirim password mentah ke server
+  // (di sini "server" = interceptor lokal, tapi formatnya tetap benar).
+  function makePasswordHash(password) {
+    var salt = genSaltHex(16);
+    return sha256Hex(salt + '::mykitchen-pw::' + password).then(function (h) { return salt + '$' + h; });
+  }
+  function verifyPassword(password, stored) {
+    if (!stored || stored.indexOf('$') < 0) return Promise.resolve(false);
+    var parts = stored.split('$');
+    return sha256Hex(parts[0] + '::mykitchen-pw::' + password).then(function (h) { return h === parts[1]; });
+  }
+
+  var PORTAL_SESSION_KEY = 'mykitchen_portal_session';
+  function getPortalSession() {
+    try {
+      var s = JSON.parse(sessionStorage.getItem(PORTAL_SESSION_KEY) || 'null');
+      return (s && s.role) ? s : null;
+    } catch (e) { return null; }
+  }
+
+  function resolveEmployeeOutlets(emp) {
+    if (emp.role === 'area_manager') {
+      return rawSel('manager_outlets', 'select=outlet_id&employee_id=eq.' + encodeURIComponent(emp.id))
+        .then(function (rows) { return (rows || []).map(function (r) { return r.outlet_id; }); })
+        .catch(function () { return []; });
+    }
+    if (emp.role === 'store_manager') return Promise.resolve(emp.outlet_id ? [emp.outlet_id] : []);
+    return Promise.resolve([]);
+  }
+
+  function loginAsOwner(password) {
+    return getSetting('owner_username').then(function (ou) {
+      var ownerUsername = ou || 'owner';
+      return getSetting('owner_password_hash').then(function (ph) {
+        if (ph) {
+          return verifyPassword(password, ph).then(function (ok) {
+            if (!ok) return unauthorized({ success: false, message: 'Username atau password salah.' });
+            return ok({ success: true, session: { id: 'owner', username: ownerUsername, name: 'Owner', role: 'owner', outletIds: ['*'] } });
+          });
+        }
+        // Migrasi sekali: cocokkan dengan owner_pin lama; PIN lama menjadi
+        // password awal dan langsung disimpan sebagai hash baru.
+        return getOwnerPin().then(function (pin) {
+          if (hashPin(password) !== hashPin(pin)) return unauthorized({ success: false, message: 'Username atau password salah.' });
+          return makePasswordHash(password).then(function (newHash) {
+            return upsertSetting('owner_password_hash', newHash).then(function () {
+              return ok({ success: true, migrated: true, session: { id: 'owner', username: ownerUsername, name: 'Owner', role: 'owner', outletIds: ['*'] } });
+            });
+          });
+        });
+      });
+    });
+  }
+
+  function loginAsEmployee(username, password) {
+    return sel('employees', 'select=id,name,role,active,outlet_id,username,password_hash&username=eq.' + encodeURIComponent(username) + '&limit=1', { allOutlets: true })
+      .then(function (rows) {
+        var e = rows && rows[0];
+        if (!e || !e.active || !e.password_hash) return unauthorized({ success: false, message: 'Username atau password salah.' });
+        if (e.role === 'kasir') return forbidden({ success: false, message: 'Akun kasir hanya untuk POS, tidak bisa buka portal.' });
+        if (['area_manager', 'store_manager'].indexOf(e.role) < 0) return forbidden({ success: false, message: 'Peran tidak dikenal.' });
+        return verifyPassword(password, e.password_hash).then(function (ok) {
+          if (!ok) return unauthorized({ success: false, message: 'Username atau password salah.' });
+          return resolveEmployeeOutlets(e).then(function (outletIds) {
+            return ok({ success: true, session: { id: e.id, username: e.username, name: e.name, role: e.role, outletIds: outletIds } });
+          });
+        });
+      });
+  }
+
+  // 2b2. POST /api/portal/login — { username, password } -> sesi peran.
+  routes['POST /api/portal/login'] = function (body) {
+    var username = String(body.username || '').trim();
+    var password = String(body.password || '');
+    if (!username || !password) return Promise.resolve(bad({ success: false, message: 'Username dan password wajib diisi.' }));
+    return getSetting('owner_username').then(function (ou) {
+      if (username === (ou || 'owner')) return loginAsOwner(password);
+      return loginAsEmployee(username, password);
+    }).catch(serverError);
+  };
+
+  // 2b3. POST /api/portal/logout — sesi dihapus klien; server jawab ok.
+  routes['POST /api/portal/logout'] = function () {
+    return Promise.resolve(ok({ success: true }));
+  };
+
+  // 2b4. GET /api/portal/session — validasi sesi (pegawai masih aktif?).
+  routes['GET /api/portal/session'] = function () {
+    var s = getPortalSession();
+    if (!s) return Promise.resolve(unauthorized({ success: false, message: 'Belum login.' }));
+    if (s.role === 'owner') return Promise.resolve(ok({ success: true, session: s }));
+    return sel('employees', 'select=active&id=eq.' + encodeURIComponent(s.id) + '&limit=1', { allOutlets: true })
+      .then(function (rows) {
+        if (!rows.length || !rows[0].active) return unauthorized({ success: false, message: 'Akun dinonaktifkan.' });
+        return ok({ success: true, session: s });
+      }).catch(serverError);
+  };
+
+  /* Helper otorisasi route portal (dipakai fase 2d/2e). */
+  function requirePortal(roles) {
+    var s = getPortalSession();
+    if (!s) return { ok: false, res: unauthorized({ success: false, message: 'Sesi berakhir. Silakan login lagi.' }) };
+    if (roles.indexOf(s.role) < 0) return { ok: false, res: forbidden({ success: false, message: 'Peran "' + s.role + '" tidak boleh memakai fitur ini.' }) };
+    return { ok: true, session: s };
+  }
+  function sessionCanOutlet(session, outletId) {
+    if (!outletId || session.role === 'owner') return true;
+    return (session.outletIds || []).indexOf(outletId) >= 0;
+  }
+
   // 2b. POST /api/owner/change-pin — { old_pin, new_pin } (4-6 digit angka).
   routes['POST /api/owner/change-pin'] = function (body) {
     var oldPin = String(body.old_pin || '');
