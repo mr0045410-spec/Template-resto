@@ -15,7 +15,8 @@
   } } } };
 </script>
 <script src="https://unpkg.com/lucide@latest"></script>
-<script src="api-supabase.js?v=20261004d"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/qrcodejs/1.0.0/qrcode.min.js"></script>
+<script src="api-supabase.js?v=20261004e"></script>
 <style>
   @import url('https://fonts.googleapis.com/css2?family=Karla:wght@400;500;600;700;800&family=Playfair+Display+SC:wght@400;700&family=Space+Mono:wght@400;700&display=swap');
   body { font-family: 'Karla', system-ui, sans-serif; background-color: #F8F9FA; color: #450A0A; -webkit-tap-highlight-color: transparent; }
@@ -68,6 +69,29 @@
   </div>
 </div>
 
+<!-- Banner notifikasi: makanan siap antar -->
+<div id="w-ready-banner" class="hidden sticky top-0 z-30 bg-emerald-600 text-white px-4 py-3 shadow-lg">
+  <div class="flex items-center gap-2">
+    <span class="text-2xl animate-bounce">🔔</span>
+    <div class="flex-1">
+      <p class="font-extrabold text-sm" id="w-ready-text">Ada makanan siap diantar!</p>
+      <p class="text-[11px] opacity-90">Ketuk untuk lihat daftar</p>
+    </div>
+    <button onclick="wShowReadyList()" class="px-3 py-1.5 rounded-xl bg-white text-emerald-700 text-xs font-extrabold">Lihat</button>
+  </div>
+</div>
+
+<!-- Modal daftar siap antar -->
+<div id="w-ready-modal" class="hidden fixed inset-0 z-50 bg-black/50 flex items-end sm:items-center justify-center" onclick="if(event.target===this)closeWReady()">
+  <div class="bg-white rounded-t-3xl sm:rounded-3xl w-full max-w-md p-5 max-h-[80vh] overflow-y-auto">
+    <div class="flex items-center justify-between mb-3">
+      <h3 class="font-extrabold text-brand-dark">🍽️ Siap Diantar</h3>
+      <button onclick="closeWReady()" class="p-2 rounded-full bg-stone-100 text-stone-500"><span class="text-lg leading-none">×</span></button>
+    </div>
+    <div id="w-ready-list" class="space-y-2"></div>
+  </div>
+</div>
+
 <!-- Tab: Tables -->
 <div id="wtab-body-tables" class="p-3">
   <div id="w-tables" class="space-y-4">
@@ -79,6 +103,44 @@
 <div id="wtab-body-orders" class="p-3 hidden">
   <div id="w-orders" class="space-y-2.5">
     <p class="text-center text-stone-400 text-sm py-10">Memuat pesanan...</p>
+  </div>
+</div>
+
+<!-- Action sheet meja -->
+<div id="w-table-sheet" class="hidden fixed inset-0 z-40 bg-black/50" onclick="if(event.target===this)closeWTableSheet()">
+  <div class="absolute bottom-0 left-0 right-0 bg-white rounded-t-3xl p-5 max-w-lg mx-auto">
+    <div class="flex items-center justify-between mb-1">
+      <h3 class="font-extrabold text-brand-dark text-lg" id="w-ts-title">Meja -</h3>
+      <button onclick="closeWTableSheet()" class="p-2 rounded-full bg-stone-100 text-stone-500"><span class="text-lg leading-none">×</span></button>
+    </div>
+    <p class="text-xs text-stone-500 mb-4" id="w-ts-sub"></p>
+    <div class="space-y-2">
+      <button onclick="wTSOrder()" class="w-full py-3.5 rounded-2xl bg-brand text-white font-extrabold text-sm flex items-center justify-center gap-2">
+        <i data-lucide="utensils" class="w-4 h-4"></i> Buat Order
+      </button>
+      <button onclick="wTSQR()" class="w-full py-3.5 rounded-2xl bg-stone-900 text-white font-extrabold text-sm flex items-center justify-center gap-2">
+        <i data-lucide="qr-code" class="w-4 h-4"></i> QR Meja (cetak/tempel)
+      </button>
+      <button onclick="wTSToggle()" id="w-ts-toggle" class="w-full py-3.5 rounded-2xl font-extrabold text-sm flex items-center justify-center gap-2"></button>
+    </div>
+  </div>
+</div>
+
+<!-- Modal QR meja -->
+<div id="w-qr-modal" class="hidden fixed inset-0 z-50 bg-brand-dark/90 flex items-center justify-center p-6" onclick="if(event.target===this)closeWQR()">
+  <div class="bg-white rounded-3xl p-6 w-full max-w-xs text-center" id="w-qr-print-area">
+    <div class="flex items-center justify-center gap-2 mb-1">
+      <img data-brand-logo src="./assets/logo-my-kitchen.svg" alt="" class="h-8 object-contain">
+      <span class="font-display text-lg text-brand-dark" data-brand-text="name">My Kitchen</span>
+    </div>
+    <p class="font-extrabold text-brand-dark text-xl mb-1" id="w-qr-table"></p>
+    <p class="text-[11px] text-stone-500 mb-3">Scan untuk pesan dari meja ini</p>
+    <div id="w-qr-code" class="flex justify-center mb-3"></div>
+    <p class="text-[10px] text-stone-400 break-all mb-4" id="w-qr-url"></p>
+    <div class="flex gap-2">
+      <button onclick="window.print()" class="flex-1 py-2.5 rounded-2xl bg-brand-dark text-white text-sm font-extrabold">🖨️ Cetak</button>
+      <button onclick="closeWQR()" class="flex-1 py-2.5 rounded-2xl bg-stone-100 text-stone-600 text-sm font-extrabold">Tutup</button>
+    </div>
   </div>
 </div>
 
@@ -118,6 +180,92 @@
   let CART = {};
   let ACTIVE_TABLE = null;
   let ACTIVE_CAT = 'all';
+  let TS_TABLE = null; // meja di action sheet
+
+  // format durasi isi meja: "5 mnt", "1 j 20 mnt"
+  function fmtDwell(iso) {
+    if (!iso) return '';
+    const ms = Date.now() - new Date(iso).getTime();
+    if (isNaN(ms) || ms < 0) return '';
+    const m = Math.floor(ms / 60000);
+    if (m < 1) return 'baru aja';
+    if (m < 60) return m + ' mnt';
+    return Math.floor(m / 60) + ' j ' + (m % 60) + ' mnt';
+  }
+  function refreshDwell() {
+    document.querySelectorAll('[data-dwell]').forEach(el => {
+      const t = fmtDwell(el.getAttribute('data-dwell'));
+      el.textContent = t ? '⏱ ' + t : '';
+    });
+  }
+  setInterval(refreshDwell, 30000);
+
+  // === Notifikasi makanan siap antar ===
+  let READY_IDS = new Set();
+  let READY_AUDIO = null;
+  function beep() {
+    try {
+      READY_AUDIO = READY_AUDIO || new (window.AudioContext || window.webkitAudioContext)();
+      const ctx = READY_AUDIO;
+      [0, 0.25, 0.5].forEach(delay => {
+        const o = ctx.createOscillator();
+        const g = ctx.createGain();
+        o.connect(g); g.connect(ctx.destination);
+        o.frequency.value = 880;
+        g.gain.setValueAtTime(0.3, ctx.currentTime + delay);
+        g.gain.exponentialRampToValueAtTime(0.01, ctx.currentTime + delay + 0.2);
+        o.start(ctx.currentTime + delay);
+        o.stop(ctx.currentTime + delay + 0.22);
+      });
+    } catch (e) {}
+  }
+  async function pollReady() {
+    if (!OUTLET) return;
+    try {
+      const r = await fetch('/api/waiter/ready-orders?outlet_id=' + encodeURIComponent(OUTLET));
+      const d = await r.json();
+      const list = (d.success && d.orders) || [];
+      const ids = new Set(list.map(o => o.id));
+      const baru = list.filter(o => !READY_IDS.has(o.id));
+      READY_IDS = ids;
+      window._wReady = list;
+      if (baru.length) beep();
+      const banner = $('w-ready-banner');
+      if (list.length) {
+        banner.classList.remove('hidden');
+        $('w-ready-text').textContent = list.length + ' order siap diantar' +
+          (list.length <= 3 ? ': ' + list.map(o => 'Meja ' + o.table).join(', ') : '');
+      } else {
+        banner.classList.add('hidden');
+      }
+    } catch (e) {}
+  }
+  window.wShowReadyList = () => {
+    const list = window._wReady || [];
+    $('w-ready-list').innerHTML = list.length ? list.map(o => `
+      <div class="bg-emerald-50 border border-emerald-200 rounded-2xl p-3 flex items-center gap-3">
+        <div class="flex-1">
+          <p class="font-extrabold text-sm text-brand-dark">Meja ${esc(o.table)}</p>
+          <p class="text-[11px] text-stone-500">${o.itemCount} item · ${esc(o.id.slice(-6))}</p>
+        </div>
+        <button onclick="wMarkServed('${o.id}')" class="px-4 py-2 rounded-xl bg-emerald-600 text-white text-xs font-extrabold">Sudah Diantar</button>
+      </div>`).join('')
+      : '<p class="text-center text-stone-400 text-sm py-6">Tidak ada yang siap diantar.</p>';
+    $('w-ready-banner').classList.add('hidden');
+    $('w-ready-modal').classList.remove('hidden');
+  };
+  window.closeWReady = () => { $('w-ready-modal').classList.add('hidden'); pollReady(); };
+  window.wMarkServed = async (orderId) => {
+    try {
+      const r = await fetch('/api/waiter/mark-served', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ outlet_id: OUTLET, order_id: orderId })
+      });
+      const d = await r.json();
+      if (d.success) { READY_IDS.delete(orderId); pollReady(); wShowReadyList(); }
+      else alert(d.message || 'Gagal.');
+    } catch (e) { alert('Jaringan bermasalah.'); }
+  };
 
   const ST_META = {
     free: { label: 'Kosong', bg: 'bg-emerald-500' },
@@ -160,9 +308,11 @@
     $('w-outlet-name').textContent = opt ? opt.textContent : 'Waiter';
     loadTables();
     loadMenus();
+    pollReady();
     // refresh berkala
     setInterval(loadTables, 20000);
     setInterval(loadActiveOrders, 20000);
+    setInterval(pollReady, 15000);
   }
 
   window.wShowTab = tab => {
@@ -191,17 +341,20 @@
         <div class="grid grid-cols-3 gap-2">
           ${ts.map(t => {
             const m = ST_META[t.status] || ST_META.free;
+            const dwell = (t.status === 'occupied' && t.occupiedSince) ? `<span data-dwell="${esc(t.occupiedSince)}" class="block text-[10px] font-bold opacity-90"></span>` : '';
             return `
-            <button onclick="wPickTable('${t.id}', '${esc(t.number)}', '${t.status}')"
-                    class="tbl-btn rounded-2xl p-4 text-white font-extrabold ${m.bg} shadow">
-              <span class="text-lg">${esc(t.number)}</span>
+            <button onclick="wTableAction('${t.id}')"
+                    class="tbl-btn rounded-2xl p-3 text-white font-extrabold ${m.bg} shadow text-left">
+              <span class="text-lg block leading-tight">${esc(t.number)}</span>
               <span class="block text-[10px] font-normal opacity-90">${m.label}</span>
+              ${dwell}
             </button>`;
           }).join('')}
         </div>`;
       }).join('') || '<p class="text-center text-stone-400 text-sm py-10">Belum ada meja.</p>';
       // simpan utk dipakai
       window._wTables = d.tables;
+      refreshDwell();
     } catch (e) {}
   }
 
@@ -212,6 +365,69 @@
       MENUS = (d.success && d.menus) || [];
     } catch (e) { MENUS = []; }
   }
+
+  // === Action sheet per meja ===
+  function findTable(id) { return (window._wTables || []).find(t => t.id === id); }
+  window.wTableAction = id => {
+    const t = findTable(id);
+    if (!t) return;
+    TS_TABLE = t;
+    $('w-ts-title').textContent = 'Meja ' + t.number;
+    const m = ST_META[t.status] || ST_META.free;
+    const dwell = (t.status === 'occupied' && t.occupiedSince) ? ' · terisi ' + fmtDwell(t.occupiedSince) : '';
+    $('w-ts-sub').textContent = 'Status: ' + m.label + dwell + ' · Kapasitas ' + (t.capacity || 4);
+    const tg = $('w-ts-toggle');
+    if (t.status === 'occupied') {
+      tg.className = 'w-full py-3.5 rounded-2xl bg-emerald-600 text-white font-extrabold text-sm flex items-center justify-center gap-2';
+      tg.innerHTML = '<i data-lucide="check" class="w-4 h-4"></i> Tandai Kosong';
+    } else {
+      tg.className = 'w-full py-3.5 rounded-2xl bg-amber-500 text-white font-extrabold text-sm flex items-center justify-center gap-2';
+      tg.innerHTML = '<i data-lucide="user" class="w-4 h-4"></i> Tandai Isi';
+    }
+    $('w-table-sheet').classList.remove('hidden');
+    lucide.createIcons();
+  };
+  window.closeWTableSheet = () => { $('w-table-sheet').classList.add('hidden'); TS_TABLE = null; };
+  window.wTSOrder = () => {
+    if (!TS_TABLE) return;
+    const t = TS_TABLE;
+    closeWTableSheet();
+    wPickTable(t.id, t.number, t.status);
+  };
+  window.wTSToggle = async () => {
+    if (!TS_TABLE) return;
+    const t = TS_TABLE;
+    const next = t.status === 'occupied' ? 'free' : 'occupied';
+    const label = next === 'occupied' ? 'isi' : 'kosong';
+    if (!confirm('Tandai meja ' + t.number + ' sebagai ' + label + '?')) return;
+    try {
+      const r = await fetch('/api/waiter/table-status', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ outlet_id: OUTLET, table_id: t.id, status: next })
+      });
+      const d = await r.json();
+      if (d.success) { closeWTableSheet(); loadTables(); }
+      else alert(d.message || 'Gagal.');
+    } catch (e) { alert('Jaringan bermasalah.'); }
+  };
+  // === QR meja ===
+  window.wTSQR = () => {
+    if (!TS_TABLE) return;
+    const t = TS_TABLE;
+    const url = location.origin + '/qr.html?outlet=' + encodeURIComponent(OUTLET) + '&table=' + encodeURIComponent(t.number);
+    $('w-qr-table').textContent = 'Meja ' + t.number;
+    $('w-qr-url').textContent = url;
+    const box = $('w-qr-code');
+    box.innerHTML = '';
+    try {
+      new QRCode(box, { text: url, width: 200, height: 200, correctLevel: QRCode.CorrectLevel.M });
+    } catch (e) {
+      box.innerHTML = '<p class="text-xs text-stone-500">QR gagal dibuat.<br><span class="break-all">' + esc(url) + '</span></p>';
+    }
+    $('w-qr-modal').classList.remove('hidden');
+    lucide.createIcons();
+  };
+  window.closeWQR = () => { $('w-qr-modal').classList.add('hidden'); };
 
   window.wPickTable = (id, number, status) => {
     ACTIVE_TABLE = { id, number };
