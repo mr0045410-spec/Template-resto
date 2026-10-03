@@ -311,6 +311,7 @@
       payment_method: o.paymentMethod, cash_paid: o.cashPaid,
       cash_change: o.cashChange, payment_reference: o.paymentReference || '',
       cashier: o.cashier, status: o.status, shift_id: o.shiftId || null,
+      outlet_id: o.outletId || null,
       client_ref: o.clientRef || null,
       promo_id: o.promoId || null, promo_name: o.promoName || null,
       customer_id: o.customerId || null, customer_name: o.customerName || null,
@@ -603,13 +604,15 @@
         newOrder.serviceAmount = Math.round(_taxable * _sr / 100);
         newOrder.total = _taxable + newOrder.taxAmount + newOrder.serviceAmount;
       }
-      // Jika checkout dari shift aktif: pakai nama pegawai shift sebagai kasir.
+      // Jika checkout dari shift aktif: pakai nama pegawai shift sebagai kasir,
+      // dan outlet shift sebagai outlet order (sumber kebenaran server).
       // Tanpa shiftId, perilaku lama dipertahankan (body.cashier || 'Kasir 1').
       var shiftNameLookup = newOrder.shiftId
-        ? sel('shifts', 'select=employee_name,status&id=eq.' + encodeURIComponent(newOrder.shiftId))
+        ? sel('shifts', 'select=employee_name,status,outlet_id&id=eq.' + encodeURIComponent(newOrder.shiftId))
           .then(function (sr) {
-            if (sr.length && sr[0].status === 'open' && sr[0].employee_name) {
-              newOrder.cashier = sr[0].employee_name;
+            if (sr.length && sr[0].status === 'open') {
+              if (sr[0].employee_name) newOrder.cashier = sr[0].employee_name;
+              if (sr[0].outlet_id) newOrder.outletId = sr[0].outlet_id;
             }
           })
           .catch(function () { /* shift tidak valid -> pakai cashier dari body */ })
