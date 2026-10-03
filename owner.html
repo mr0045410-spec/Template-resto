@@ -3,7 +3,7 @@
 <head>
   <script src="brand-config.js"></script>
   <script>window.__mykitchenOutletKey = 'mykitchen_owner_outlet_filter';</script>
-  <script src="api-supabase.js?v=20261003t"></script>
+  <script src="api-supabase.js?v=20261003u"></script>
   <!-- api-shim: ganti /api/* dgn localStorage (perbaikan persistensi utk hosting statis) -->
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
@@ -668,7 +668,7 @@
             <div class="hidden sm:block text-[11px] text-stone-500 bg-red-50 text-red-900 border border-red-200 px-3 py-1.5 rounded-xl font-medium">
               💡 <strong>HPP Terkini</strong> dihitung otomatis dari harga bahan baku
             </div>
-            <button onclick="openCreateMenuModal()" class="inline-flex items-center gap-1.5 px-3.5 py-2 rounded-xl bg-brand hover:bg-brand-hover text-white text-xs font-bold shadow-xs transition-colors">
+            <button id="btn-add-menu" onclick="openCreateMenuModal()" class="inline-flex items-center gap-1.5 px-3.5 py-2 rounded-xl bg-brand hover:bg-brand-hover text-white text-xs font-bold shadow-xs transition-colors">
               <i data-lucide="plus-circle" class="w-3.5 h-3.5"></i>
               <span>+ Tambah Menu Baru</span>
             </button>
@@ -1940,6 +1940,14 @@
             </div>
           </div>
 
+          <div>
+            <label class="block font-bold text-stone-700 mb-1">Cakupan Menu <span class="text-rose-500">*</span></label>
+            <select id="recipe-modal-outlet-input" required class="w-full px-3 py-2 rounded-xl border border-stone-300 font-semibold text-xs focus:border-brand focus:outline-none bg-white">
+              <option value="CENTRAL">★ Menu Pusat — tampil di SEMUA outlet</option>
+            </select>
+            <p class="text-[11px] text-stone-400 mt-1">Menu pusat: sekali bikin, langsung tampil di semua outlet. Menu khusus: hanya di outlet yang dipilih.</p>
+          </div>
+
           <div class="grid grid-cols-1 sm:grid-cols-2 gap-3">
             <div>
               <label class="block font-bold text-stone-700 mb-1">Harga Jual Kasir (Rp) <span class="text-rose-500">*</span></label>
@@ -2237,6 +2245,7 @@
     }
 
     function getPortalRole() { return portalSession ? portalSession.role : 'owner'; }
+    function canManageMenu() { const r = getPortalRole(); return r === 'owner' || r === 'area_manager'; }
     function isOwner() { return getPortalRole() === 'owner'; }
     const ROLE_LABEL = { owner: 'Owner', area_manager: 'Area Manager', store_manager: 'Store Manager', kasir: 'Kasir' };
     // Tab yang boleh dibuka tiap peran
@@ -2266,6 +2275,9 @@
       // Kelola Outlet hanya untuk owner
       const kelola = document.getElementById('kelola-outlet-section');
       if (kelola) kelola.classList.toggle('hidden', !isOwner());
+      // Tambah menu: hanya owner + area manager (route API-nya juga begitu)
+      const btnAddMenu = document.getElementById('btn-add-menu');
+      if (btnAddMenu) btnAddMenu.classList.toggle('hidden', !canManageMenu());
       // Store manager: kunci filter ke outletnya
       if (role === 'store_manager' && portalSession.outletIds && portalSession.outletIds[0] && portalSession.outletIds[0] !== '*') {
         setOwnerOutletId(portalSession.outletIds[0]);
@@ -4814,7 +4826,8 @@
                 <div class="flex items-center gap-2.5">
                   <img src="${menu.image}" class="w-11 h-11 rounded-xl object-cover border border-stone-200" onerror="this.src=BRAND.logo">
                   <div>
-                    <h4 class="font-extrabold text-stone-900 text-sm leading-tight">${menu.name}</h4>
+                    <h4 class="font-extrabold text-stone-900 text-sm leading-tight">${menu.name}
+                      ${menu.isCentral ? '<span class="ml-1 px-1.5 py-0.5 rounded-md text-[9px] font-black bg-indigo-100 text-indigo-800 border border-indigo-300 align-middle">PUSAT</span>' : ''}</h4>
                     <span class="text-[11px] text-stone-500 font-mono font-semibold">${menu.price}</span>
                   </div>
                 </div>
@@ -4853,13 +4866,13 @@
               </div>
             ` : ''}
 
-            <div class="mt-3 pt-2.5 border-t border-stone-200">
-              <button onclick="openRecipeModal('${menu.id}')" 
+            ${canManageMenu() ? `<div class="mt-3 pt-2.5 border-t border-stone-200">
+              <button onclick="openRecipeModal('` + menu.id + `')"
                       class="w-full py-2 px-3 rounded-xl bg-amber-50 hover:bg-amber-100 text-amber-900 border border-amber-300 font-bold text-xs flex items-center justify-center gap-1.5 transition-colors shadow-2xs">
                 <i data-lucide="pencil" class="w-3.5 h-3.5 text-amber-700"></i>
                 <span>Edit Menu & Resep</span>
               </button>
-            </div>
+            </div>` : ''}
           </div>
         `;
       }).join('');
@@ -5019,6 +5032,20 @@
       imgEl.src = (url && url.trim()) ? url.trim() : BRAND.logo;
     }
 
+    function renderMenuScopeOptions(selected) {
+      const sel = document.getElementById('recipe-modal-outlet-input');
+      if (!sel) return;
+      const role = getPortalRole();
+      let list = (ownerOutlets || []).filter(o => o.active);
+      if (role === 'area_manager' && portalSession && portalSession.outletIds) {
+        const ids = portalSession.outletIds.filter(id => id !== '*');
+        list = list.filter(o => ids.indexOf(o.id) >= 0);
+      }
+      sel.innerHTML = '<option value="CENTRAL">★ Menu Pusat — tampil di SEMUA outlet</option>' +
+        list.map(o => `<option value="${o.id}">${escapeOwnerHtml(o.name)} (khusus outlet ini)</option>`).join('');
+      sel.value = selected || 'CENTRAL';
+    }
+
     function openCreateMenuModal() {
       editingRecipeMenuId = null;
       document.getElementById('recipe-modal-is-new').value = 'true';
@@ -5039,7 +5066,8 @@
       document.getElementById('recipe-modal-cat-input').value = 'makanan';
       document.getElementById('recipe-modal-price-input').value = '25000';
       document.getElementById('recipe-modal-img-input').value = '';
-      
+      renderMenuScopeOptions(getOwnerOutletId() && getOwnerOutletId() !== 'ALL' ? getOwnerOutletId().split(',')[0] : 'CENTRAL');
+
       const imgEl = document.getElementById('recipe-modal-menu-img');
       if (imgEl) imgEl.src = BRAND.logo;
 
@@ -5096,6 +5124,7 @@
 
       document.getElementById('recipe-modal-is-new').value = 'false';
       document.getElementById('recipe-modal-menu-id').value = menuId;
+      renderMenuScopeOptions(menu.isCentral ? 'CENTRAL' : (menu.outletId || 'CENTRAL'));
       document.getElementById('recipe-modal-title').textContent = 'Edit Menu & Racik Resep';
       const badge = document.getElementById('recipe-modal-mode-badge');
       if (badge) {
@@ -5307,6 +5336,7 @@
             price: formattedPrice,
             image: image || undefined,
             isNew,
+            outlet_id: document.getElementById('recipe-modal-outlet-input').value,
             items: editingRecipeRows
           })
         });
