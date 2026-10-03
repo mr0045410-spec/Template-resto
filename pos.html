@@ -2,7 +2,7 @@
 <html lang="id">
 <head>
   <script src="brand-config.js"></script>
-  <script src="api-supabase.js?v=20261004b"></script>
+  <script src="api-supabase.js?v=20261004c"></script>
   <!-- api-shim: ganti /api/* dgn localStorage (perbaikan persistensi utk hosting statis) -->
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
@@ -402,7 +402,7 @@
       </div>
 
       <!-- Payment Method Tabs -->
-      <div class="grid grid-cols-3 gap-2 mb-4">
+      <div class="grid grid-cols-4 gap-2 mb-4">
         <button type="button" onclick="selectPaymentMethod('cash')" id="btn-method-cash" class="py-2.5 px-2 rounded-xl text-center border-2 border-emerald-600 bg-emerald-50 text-emerald-800 font-bold text-xs flex flex-col items-center gap-1 transition-all">
           <i data-lucide="banknote" class="w-5 h-5 text-emerald-600"></i>
           <span>Tunai (Cash)</span>
@@ -415,6 +415,25 @@
           <i data-lucide="credit-card" class="w-5 h-5 text-stone-600"></i>
           <span>Debit / EDC</span>
         </button>
+        <button type="button" onclick="selectPaymentMethod('split')" id="btn-method-split" class="py-2.5 px-2 rounded-xl text-center border-2 border-stone-200 text-stone-600 font-semibold text-xs flex flex-col items-center gap-1 transition-all hover:bg-stone-50">
+          <i data-lucide="split" class="w-5 h-5 text-stone-600"></i>
+          <span>Split</span>
+        </button>
+      </div>
+
+      <!-- Tab Content: Split -->
+      <div id="tab-payment-split" class="hidden space-y-3.5 flex-1 overflow-y-auto">
+        <div class="text-xs text-stone-500 bg-stone-50 p-3 rounded-xl">Bagi total ke beberapa metode. Jumlah harus pas dengan total.</div>
+        <div id="split-rows" class="space-y-2"></div>
+        <button type="button" onclick="addSplitRow()" class="w-full py-2 rounded-xl bg-stone-100 hover:bg-stone-200 text-stone-700 text-xs font-bold">+ Tambah Metode</button>
+        <div class="flex justify-between text-xs font-bold pt-2 border-t border-stone-200">
+          <span class="text-stone-500">Total split:</span>
+          <span id="split-total" class="font-mono">Rp 0</span>
+        </div>
+        <div class="flex justify-between text-xs font-bold">
+          <span class="text-stone-500">Sisa:</span>
+          <span id="split-remaining" class="font-mono text-rose-600">Rp 0</span>
+        </div>
       </div>
 
       <!-- Tab Content 1: Cash / Tunai -->
@@ -1921,9 +1940,10 @@
       document.getElementById('payment-modal').classList.add('hidden');
     }
 
+    let splitRows = [];
     function selectPaymentMethod(method) {
       selectedPayment = method;
-      const methods = ['cash', 'qris', 'edc'];
+      const methods = ['cash', 'qris', 'edc', 'split'];
       
       methods.forEach(m => {
         const btn = document.getElementById(`btn-method-${m}`);
@@ -1939,6 +1959,42 @@
         }
       });
     }
+
+    function addSplitRow() {
+      splitRows.push({ method: 'cash', amount: 0 });
+      renderSplitRows();
+    }
+    function renderSplitRows() {
+      const box = document.getElementById('split-rows');
+      box.innerHTML = splitRows.map((r, i) => `
+        <div class="flex gap-2 items-center">
+          <select onchange="splitRows[${i}].method=this.value;updateSplitTotal()" class="py-2 px-2 rounded-xl border border-stone-300 text-xs font-bold focus:border-brand focus:outline-none">
+            <option value="cash" ${r.method === 'cash' ? 'selected' : ''}>Tunai</option>
+            <option value="qris" ${r.method === 'qris' ? 'selected' : ''}>QRIS</option>
+            <option value="edc" ${r.method === 'edc' ? 'selected' : ''}>EDC</option>
+          </select>
+          <input type="number" min="0" value="${r.amount || ''}" placeholder="0" oninput="splitRows[${i}].amount=parseInt(this.value)||0;updateSplitTotal()"
+                 class="flex-1 px-3 py-2 rounded-xl border border-stone-300 text-xs font-mono font-bold focus:border-brand focus:outline-none">
+          <button onclick="splitRows.splice(${i},1);renderSplitRows()" class="p-2 text-stone-400 hover:text-rose-600">×</button>
+        </div>`).join('');
+      updateSplitTotal();
+    }
+    function updateSplitTotal() {
+      const { grandTotal } = calculateCartTotal();
+      const sum = splitRows.reduce((s, r) => s + (parseInt(r.amount) || 0), 0);
+      document.getElementById('split-total').textContent = 'Rp ' + sum.toLocaleString('id-ID');
+      const rem = grandTotal - sum;
+      const remEl = document.getElementById('split-remaining');
+      remEl.textContent = 'Rp ' + Math.abs(rem).toLocaleString('id-ID');
+      remEl.className = 'font-mono ' + (rem === 0 ? 'text-emerald-600' : 'text-rose-600');
+    }
+    // Reset split saat modal dibuka
+    const _origOpenPay = openPaymentModal;
+    openPaymentModal = function() {
+      splitRows = [{ method: 'cash', amount: 0 }, { method: 'qris', amount: 0 }];
+      _origOpenPay();
+      renderSplitRows();
+    };
 
     function setCashAmount(amt) {
       currentCashReceived = amt;
@@ -1993,6 +2049,17 @@
         toast('Jumlah uang tunai yang diterima masih kurang!', 'error');
         return;
       }
+      // Validasi split: jumlah harus pas
+      let splitPayload = null;
+      if (selectedPayment === 'split') {
+        const valid = splitRows.filter(r => r.method && (parseInt(r.amount) || 0) > 0);
+        const sum = valid.reduce((s, r) => s + (parseInt(r.amount) || 0), 0);
+        if (!valid.length || sum !== grandTotal) {
+          toast('Total split harus pas Rp ' + grandTotal.toLocaleString('id-ID'), 'error');
+          return;
+        }
+        splitPayload = valid.map(r => ({ method: r.method, amount: parseInt(r.amount) || 0 }));
+      }
 
       const submitBtn = document.getElementById('btn-submit-payment');
       submitBtn.disabled = true;
@@ -2028,6 +2095,7 @@
         serviceRate, serviceAmount,
         total: grandTotal,
         paymentMethod: selectedPayment,
+        payments: splitPayload,
         cashPaid: selectedPayment === 'cash' ? currentCashReceived : grandTotal,
         cashChange: selectedPayment === 'cash' ? Math.max(0, currentCashReceived - grandTotal) : 0,
         paymentReference: selectedPayment === 'edc' ? (document.getElementById('edc-ref-input').value.trim() || 'EDC') : '',
