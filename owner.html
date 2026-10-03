@@ -3,7 +3,7 @@
 <head>
   <script src="brand-config.js"></script>
   <script>window.__mykitchenOutletKey = 'mykitchen_owner_outlet_filter';</script>
-  <script src="api-supabase.js?v=20261004c"></script>
+  <script src="api-supabase.js?v=20261004d"></script>
   <!-- api-shim: ganti /api/* dgn localStorage (perbaikan persistensi utk hosting statis) -->
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
@@ -230,6 +230,10 @@
       </div>
 
       <div id="inventory-top-actions" class="hidden flex flex-wrap items-center gap-2">
+        <a href="gudang.html" class="inline-flex items-center gap-1.5 px-3 py-2 rounded-xl bg-maroon hover:bg-[#5c0f0f] text-white text-xs font-bold shadow-xs transition-colors">
+          <span>📦</span>
+          <span>Buka Halaman Gudang</span>
+        </a>
         <button onclick="openTransferModal()" class="inline-flex items-center gap-1.5 px-3 py-2 rounded-xl bg-sky-50 hover:bg-sky-100 text-sky-700 border border-sky-300 text-xs font-bold shadow-xs transition-colors">
           <i data-lucide="arrow-right-left" class="w-3.5 h-3.5 text-sky-600"></i>
           <span>Transfer Stok Antar Outlet</span>
