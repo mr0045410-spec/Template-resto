@@ -1623,6 +1623,266 @@
     });
   };
 
+  // 8b. POST /api/qr/order — order dari tamu via QR (TERBUKA, tanpa sesi).
+  //     { outlet_id, table, customer_name?, items: [{menu_id, qty, note?}] }
+  //     Membuat order status 'pending' (belum bayar). Stok TIDAK dipotong dan
+  //     jurnal TIDAK dibuat sampai kasir menyelesaikan pembayaran
+  //     (POST /api/pos/checkout-pending). Dapur langsung melihat tiket.
+  routes['POST /api/qr/order'] = function (body) {
+    var outletId = String(body.outlet_id || '');
+    var table = String(body.table || '').slice(0, 20);
+    var items = body.items || [];
+    if (!outletId) return Promise.resolve(bad({ success: false, message: 'Outlet tidak jelas.' }));
+    if (!items.length) return Promise.resolve(bad({ success: false, message: 'Pesanan kosong.' }));
+    // Validasi outlet aktif
+    return rawSel('outlets', 'select=id,active&id=eq.' + encodeURIComponent(outletId) + '&limit=1')
+      .then(function (orows) {
+        if (!orows.length || !orows[0].active) {
+          return bad({ success: false, message: 'Outlet tidak aktif.' });
+        }
+        // Validasi menu: ada, tersedia, dan ikut scope outlet
+        var menuIds = items.map(function (i) { return i.menu_id; }).filter(Boolean);
+        return rawSel('menu_items', 'select=id,name,price_value,in_stock,stock_qty,outlet_id&id=in.(' +
+          menuIds.map(encodeURIComponent).join(',') + ')&limit=100');
+      })
+      .then(function (menus) {
+        if (!Array.isArray(menus)) return bad({ success: false, message: 'Gagal baca menu.' });
+        var byId = {};
+        menus.forEach(function (m) { byId[m.id] = m; });
+        var orderItems = [];
+        var subtotal = 0;
+        for (var k = 0; k < items.length; k++) {
+          var it = items[k];
+          var m = byId[it.menu_id];
+          var qty = Math.min(50, Math.max(1, parseInt(it.qty) || 1));
+          if (!m) return bad({ success: false, message: 'Menu tidak ditemukan.' });
+          // Scope: menu pusat (outlet_id null) atau milik outlet ini
+          if (m.outlet_id && m.outlet_id !== outletId) {
+            return bad({ success: false, message: 'Menu "' + m.name + '" tidak tersedia di outlet ini.' });
+          }
+          if (m.in_stock === false) {
+            return bad({ success: false, message: 'Menu "' + m.name + '" sedang habis (86).' });
+          }
+          var price = Math.round(Number(m.price_value) || 0);
+          subtotal += price * qty;
+          orderItems.push({
+            id: m.id, name: m.name, price: price, qty: qty,
+            note: String(it.note || '').slice(0, 120)
+          });
+        }
+        // Pajak PB1 10% standar (tanpa service charge utk QR v1)
+        var taxAmount = Math.round(subtotal * 0.10);
+        var total = subtotal + taxAmount;
+        var todayStr = getJakartaDateKey();
+        return rpc('next_order_seq', { p_date_key: todayStr }).then(function (seqRaw) {
+          var seq = Array.isArray(seqRaw) ? seqRaw[0] : seqRaw;
+          var orderId = __brand('orderPrefix', 'CWY') + '-' + todayStr + '-' + String(seq).padStart(4, '0');
+          var row = {
+            id: orderId,
+            outlet_id: outletId,
+            order_type: 'dine-in',
+            table_or_customer: table ? ('Meja ' + table) : 'QR Order',
+            items: orderItems,
+            subtotal: subtotal,
+            discount: 0,
+            tax_amount: taxAmount,
+            service_amount: 0,
+            total: total,
+            payment_method: 'pending',
+            cashier: 'QR Tamu',
+            customer_name: String(body.customer_name || '').slice(0, 60) || null,
+            status: 'pending',
+            kitchen_status: 'new',
+            client_ref: genClientRef()
+          };
+          return ordersHasKitchenStatus().then(function (hasKs) {
+            if (!hasKs) delete row.kitchen_status;
+            return ordersHasClientRef();
+          }).then(function (hasRef) {
+            if (!hasRef) delete row.client_ref;
+            return ordersHasPhoneCol();
+          }).then(function (hasPhone) {
+            if (!hasPhone) delete row.customer_name;
+            return ins('orders', [row]);
+          }).then(function () {
+            return created({ success: true, order: { id: orderId, total: total, table: table } });
+          });
+        });
+      }).catch(serverError);
+  };
+
+  // 8b2. GET /api/qr/menu — daftar menu publik utk tamu (tanpa sesi).
+  //      ?outlet_id= wajib. Hanya menu tersedia + hormati stok per outlet.
+  routes['GET /api/qr/menu'] = function (body, query) {
+    var outletId = String((query && query.outlet_id) || '');
+    if (!outletId) return Promise.resolve(bad({ success: false, message: 'outlet_id wajib.' }));
+    return rawSel('outlets', 'select=id,name,active&id=eq.' + encodeURIComponent(outletId) + '&limit=1')
+      .then(function (orows) {
+        if (!orows.length || !orows[0].active) {
+          return bad({ success: false, message: 'Outlet tidak aktif.' });
+        }
+        var q = 'select=id,name,price_value,category,image,in_stock,stock_qty,outlet_id' +
+          '&or=(outlet_id.is.null,outlet_id.eq.' + encodeURIComponent(outletId) + ')' +
+          '&order=name.asc&limit=200';
+        return rawSel('menu_items', q);
+      })
+      .then(function (menus) {
+        var items = (menus || []).map(function (m) {
+          return {
+            id: m.id, name: m.name, priceValue: m.price_value,
+            category: m.category, imageUrl: m.image,
+            in_stock: m.in_stock, isCentral: !m.outlet_id
+          };
+        });
+        // Hormati override stok per outlet (menu pusat yg di-86 per outlet)
+        return applyStockOverrides(items, outletId);
+      })
+      .then(function (items) {
+        var list = items.map(function (m) {
+          return {
+            id: m.id, name: m.name, price: Math.round(Number(m.priceValue) || 0),
+            category: m.category || 'Lainnya', image: m.imageUrl || '',
+            inStock: m.in_stock !== false
+          };
+        });
+        return ok({ success: true, menus: list });
+      }).catch(serverError);
+  };
+
+  // 8b3. GET /api/outlet-public — nama outlet utk halaman tamu (?id=).
+  routes['GET /api/outlet-public'] = function (body, query) {
+    var id = String((query && query.id) || '');
+    if (!id) return Promise.resolve(bad({ success: false, message: 'id wajib.' }));
+    return rawSel('outlets', 'select=id,name&id=eq.' + encodeURIComponent(id) + '&limit=1')
+      .then(function (rows) {
+        if (!rows.length) return notFound({ success: false, message: 'Outlet tidak ditemukan.' });
+        return ok({ success: true, name: rows[0].name });
+      }).catch(serverError);
+  };
+
+  // 8c. GET /api/pos/pending-orders — daftar order QR pending utk outlet POS ini.
+  routes['GET /api/pos/pending-orders'] = function () {
+    return outletReady().then(function (ready) {
+      var oid = ready ? currentOutletId() : null;
+      if (!oid || oid === 'ALL' || oid.indexOf(',') >= 0) {
+        return bad({ success: false, message: 'Kunci outlet POS dulu.' });
+      }
+      return sel('orders', 'select=*&status=eq.pending&order=created_at.asc&limit=50')
+        .then(function (rows) {
+          return ok({ success: true, orders: (rows || []).map(rowToOrder) });
+        });
+    }).catch(serverError);
+  };
+
+  // 8d. POST /api/pos/checkout-pending — kasir selesaikan pembayaran order QR.
+  //     { pending_order_id, payment_method, cash_paid?, shift_id? }
+  //     Efek: status -> completed + potong stok + jurnal (sama spt checkout).
+  routes['POST /api/pos/checkout-pending'] = function (body) {
+    var pid = String(body.pending_order_id || '');
+    if (!pid) return Promise.resolve(bad({ success: false, message: 'Order tidak jelas.' }));
+    return outletReady().then(function (ready) {
+      var oid = ready ? currentOutletId() : null;
+      return sel('orders', 'select=*&id=eq.' + encodeURIComponent(pid) + '&limit=1', { allOutlets: true })
+        .then(function (rows) {
+          var o = rows[0];
+          if (!o) return notFound({ success: false, message: 'Order tidak ditemukan.' });
+          if (o.status !== 'pending') {
+            return bad({ success: false, message: 'Order bukan pending (status: ' + o.status + ').' });
+          }
+          if (oid && oid !== 'ALL' && o.outlet_id !== oid) {
+            return json({ success: false, message: 'Order milik outlet lain.' }, 403);
+          }
+          var pm = body.payment_method || 'cash';
+          var patch = {
+            status: 'completed',
+            payment_method: pm,
+            cash_paid: Math.round(Number(body.cash_paid) || Number(o.total) || 0),
+            cash_change: Math.max(0, Math.round(Number(body.cash_paid) || 0) - Math.round(Number(o.total) || 0)),
+            cashier: String(body.cashier || o.cashier || 'Kasir 1').slice(0, 60)
+          };
+          if (body.shift_id) patch.shift_id = body.shift_id;
+          return upd('orders', 'id=eq.' + encodeURIComponent(pid), patch, { allOutlets: true })
+            .then(function () { return deductStockForOrder(pid, o.items || []); })
+            .then(function () {
+              return sel('orders', 'select=*&id=eq.' + encodeURIComponent(pid) + '&limit=1', { allOutlets: true });
+            })
+            .then(function (ur) {
+              var orderRow = ur[0];
+              return autoJournalSale(orderRow, o.items || []).then(function () {
+                return ok({ success: true, order: rowToOrder(orderRow) });
+              });
+            });
+        });
+    }).catch(serverError);
+  };
+
+  // Helper: potong stok menu + bahan utk order yg sudah ada (dipakai checkout-pending).
+  function deductStockForOrder(orderId, items) {
+    var ids = items.map(function (i) { return i.id; }).filter(Boolean);
+    if (!ids.length) return Promise.resolve();
+    return sel('menu_items', 'select=id,stock_qty&id=in.(' + ids.map(encodeURIComponent).join(',') + ')', { allOutlets: true })
+      .then(function (menuRows) {
+        var stockMap = {};
+        (menuRows || []).forEach(function (m) { stockMap[m.id] = m.stock_qty; });
+        var updates = [];
+        var menuFinal = {};
+        items.forEach(function (orderItem) {
+          var cur = typeof stockMap[orderItem.id] === 'number' ? stockMap[orderItem.id] : 25;
+          var prev = (menuFinal[orderItem.id] !== undefined) ? menuFinal[orderItem.id] : cur;
+          menuFinal[orderItem.id] = Math.max(0, prev - (Number(orderItem.qty) || 1));
+        });
+        Object.keys(menuFinal).forEach(function (mid) {
+          updates.push(upd('menu_items', 'id=eq.' + encodeURIComponent(mid),
+            { stock_qty: menuFinal[mid], in_stock: menuFinal[mid] > 0, updated_at: new Date().toISOString() }, { allOutlets: true }));
+        });
+        return Promise.all(updates);
+      })
+      .then(function () {
+        return sel('recipes', 'select=menu_id,items&menu_id=in.(' + ids.map(encodeURIComponent).join(',') + ')', { allOutlets: true });
+      })
+      .then(function (recipeRows) {
+        var recipeMap = {};
+        (recipeRows || []).forEach(function (r) { recipeMap[r.menu_id] = r.items || []; });
+        var needIds = {};
+        items.forEach(function (oi) {
+          (recipeMap[oi.id] || []).forEach(function (rec) { needIds[rec.ingredientId] = true; });
+        });
+        var ingIds = Object.keys(needIds);
+        if (!ingIds.length) return null;
+        return sel('ingredients', 'select=*&id=in.(' + ingIds.map(encodeURIComponent).join(',') + ')', { allOutlets: true })
+          .then(function (ingRows) {
+            var ingMap = {};
+            (ingRows || []).forEach(function (g) { ingMap[g.id] = g; });
+            var ops = [];
+            var logs = [];
+            var ingFinal = {};
+            items.forEach(function (orderItem) {
+              var qtyBought = Number(orderItem.qty) || 1;
+              (recipeMap[orderItem.id] || []).forEach(function (rec) {
+                var ing = ingMap[rec.ingredientId];
+                if (!ing) return;
+                var deduction = (Number(rec.amount) || 0) * qtyBought;
+                var nb = Math.max(0, Math.round((Number(ing.current_stock) - deduction) * 1000) / 1000);
+                ing.current_stock = nb;
+                ingFinal[ing.id] = nb;
+                logs.push({
+                  id: uid('log'), ingredient_id: ing.id, ingredient_name: ing.name,
+                  type: 'OUT_SALE', change_qty: -deduction, balance_qty: nb,
+                  unit: ing.unit, reference: 'POS ' + orderId,
+                  note: (orderItem.name || orderItem.id) + ' x' + qtyBought
+                });
+              });
+            });
+            Object.keys(ingFinal).forEach(function (iid) {
+              ops.push(upd('ingredients', 'id=eq.' + encodeURIComponent(iid), { current_stock: ingFinal[iid] }, { allOutlets: true }));
+            });
+            return Promise.all(ops).then(function () {
+              return logs.length ? ins('stock_logs', logs) : null;
+            });
+          });
+      });
+  }
+
   /* ==================================================================
      PROMO (skema bagian 13)
      Manajemen promo: diskon %, nominal, beli X gratis Y, voucher kode.
@@ -2454,6 +2714,221 @@
     return del('waste_logs', 'id=eq.' + encodeURIComponent(body.id)).then(function (rows) {
       if (rows && rows.length) return ok({ success: true, message: 'Catatan waste berhasil dihapus' });
       return notFound({ success: false, message: 'Catatan waste tidak ditemukan' });
+    }).catch(serverError);
+  };
+
+  // 15b. POST /api/owner/transfer — pindah stok bahan antar outlet.
+  //     { from_outlet_id, to_outlet_id, ingredient_id, qty, note? }
+  //     Hanya owner + area_manager. Stok sumber harus cukup.
+  var _hasTransferTbl = null;
+  function transferTableReady() {
+    if (_hasTransferTbl !== null) return Promise.resolve(_hasTransferTbl);
+    return rawSel('stock_transfers', 'select=id&limit=1').then(function () {
+      _hasTransferTbl = true; return true;
+    }).catch(function () { _hasTransferTbl = false; return false; });
+  }
+  routes['POST /api/owner/transfer'] = function (body) {
+    var chk = requirePortal(ROLE_MGR);
+    if (!chk.ok) return Promise.resolve(chk.res);
+    var fromId = String(body.from_outlet_id || '');
+    var toId = String(body.to_outlet_id || '');
+    var qty = Number(body.qty) || 0;
+    if (!fromId || !toId || fromId === toId) {
+      return Promise.resolve(bad({ success: false, message: 'Outlet asal & tujuan wajib beda.' }));
+    }
+    if (qty <= 0) return Promise.resolve(bad({ success: false, message: 'Jumlah harus > 0.' }));
+    if (!sessionCanOutlet(chk.session, fromId) || !sessionCanOutlet(chk.session, toId)) {
+      return Promise.resolve(forbidden({ success: false, message: 'Outlet di luar wewenang Anda.' }));
+    }
+    return transferTableReady().then(function (ready) {
+      if (!ready) return bad({ success: false, message: 'Tabel stock_transfers belum ada. Jalankan SQL batch dulu.' });
+      // Ambil bahan di outlet asal by ID; bahan tujuan dicocokkan by NAMA
+      // (tiap outlet punya baris bahan sendiri dgn ID berbeda).
+      return sel('ingredients', 'select=*&id=eq.' + encodeURIComponent(body.ingredient_id), { allOutlets: true })
+        .then(function (all) {
+          var src = all.find(function (r) { return r.outlet_id === fromId; });
+          if (!src) return notFound({ success: false, message: 'Bahan tidak ada di outlet asal.' });
+          return sel('ingredients', 'select=*&outlet_id=eq.' + encodeURIComponent(toId) + '&limit=500', { allOutlets: true })
+            .then(function (dstRows) {
+              var nm = (src.name || '').toLowerCase();
+              var dst = (dstRows || []).find(function (r) { return (r.name || '').toLowerCase() === nm; });
+              if (!dst) return notFound({ success: false, message: 'Bahan "' + src.name + '" belum ada di outlet tujuan. Tambahkan dulu bahannya.' });
+              return doTransfer(src, dst);
+            });
+        });
+
+      function doTransfer(src, dst) {
+          var srcStock = Number(src.current_stock) || 0;
+          if (srcStock < qty) {
+            return bad({ success: false, message: 'Stok outlet asal kurang (sisa ' + srcStock + ' ' + (src.unit || '') + ').' });
+          }
+          var nbSrc = Math.round((srcStock - qty) * 1000) / 1000;
+          var nbDst = Math.round(((Number(dst.current_stock) || 0) + qty) * 1000) / 1000;
+          var entry = {
+            id: uid('trf'), from_outlet_id: fromId, to_outlet_id: toId,
+            ingredient_id: src.id, ingredient_name: src.name,
+            qty: qty, unit: src.unit || '',
+            note: String(body.note || '').slice(0, 200),
+            created_by: chk.session.name || chk.session.role
+          };
+          return upd('ingredients', 'id=eq.' + encodeURIComponent(src.id), { current_stock: nbSrc }, { allOutlets: true })
+            .then(function () {
+              return upd('ingredients', 'id=eq.' + encodeURIComponent(dst.id), { current_stock: nbDst }, { allOutlets: true });
+            })
+            .then(function () { return rawIns('stock_transfers', [entry]); })
+            .then(function () {
+              var logs = [
+                { id: uid('log'), ingredient_id: src.id, ingredient_name: src.name, type: 'OUT_TRANSFER',
+                  change_qty: -qty, balance_qty: nbSrc, unit: src.unit || '',
+                  reference: 'Transfer ke ' + toId, note: body.note || '' },
+                { id: uid('log'), ingredient_id: dst.id, ingredient_name: dst.name, type: 'IN_TRANSFER',
+                  change_qty: qty, balance_qty: nbDst, unit: dst.unit || '',
+                  reference: 'Transfer dari ' + fromId, note: body.note || '' }
+              ];
+              return ins('stock_logs', logs).catch(function () {});
+            })
+            .then(function () { return ok({ success: true, transfer: entry }); });
+        }
+    }).catch(serverError);
+  };
+
+  // 15c. GET /api/owner/transfers — riwayat transfer (?outlet_id= filter salah satu sisi)
+  routes['GET /api/owner/transfers'] = function (body, query) {
+    var chk = getPortalSession();
+    if (!chk) return Promise.resolve(unauthorized({ success: false, message: 'Sesi berakhir.' }));
+    return transferTableReady().then(function (ready) {
+      if (!ready) return ok({ success: true, transfers: [] });
+      var q = 'select=*&order=created_at.desc&limit=200';
+      if (query && query.outlet_id) {
+        var oid = encodeURIComponent(query.outlet_id);
+        q += '&or=(from_outlet_id.eq.' + oid + ',to_outlet_id.eq.' + oid + ')';
+      }
+      return rawSel('stock_transfers', q).then(function (rows) {
+        var list = (rows || []).map(function (r) {
+          return {
+            id: r.id, fromOutletId: r.from_outlet_id, toOutletId: r.to_outlet_id,
+            ingredientId: r.ingredient_id, ingredientName: r.ingredient_name,
+            qty: Number(r.qty) || 0, unit: r.unit || '', note: r.note || '',
+            createdBy: r.created_by || '', createdAt: r.created_at
+          };
+        });
+        // AM/SM: filter ke outlet wewenang
+        if (chk.role !== 'owner' && chk.outletIds) {
+          var ids = chk.outletIds.filter(function (x) { return x !== '*'; });
+          list = list.filter(function (x) { return ids.indexOf(x.fromOutletId) >= 0 || ids.indexOf(x.toOutletId) >= 0; });
+        }
+        return ok({ success: true, transfers: list });
+      });
+    }).catch(serverError);
+  };
+
+  // 15d. POST /api/owner/pasar — belanja pasar tunai (petty cash).
+  //     { outlet_id?, ingredient_id?, ingredient_name?, qty, unit?, total_cost?, photo?, note?, buyer? }
+  //     Bisa pakai bahan yg sudah ada ATAU bahan baru (nama saja).
+  var _hasPasarTbl = null;
+  function pasarTableReady() {
+    if (_hasPasarTbl !== null) return Promise.resolve(_hasPasarTbl);
+    return rawSel('pasar_logs', 'select=id&limit=1').then(function () {
+      _hasPasarTbl = true; return true;
+    }).catch(function () { _hasPasarTbl = false; return false; });
+  }
+  routes['POST /api/owner/pasar'] = function (body) {
+    var chk = requirePortal(ROLE_ALL_MGR);
+    if (!chk.ok) return Promise.resolve(chk.res);
+    var qty = Number(body.qty) || 0;
+    if (qty <= 0) return Promise.resolve(bad({ success: false, message: 'Jumlah harus > 0.' }));
+    // Outlet: ikuti filter portal / kunci SM; default outlet pertama wewenang
+    var outletId = body.outlet_id || null;
+    if (chk.session.role === 'store_manager') outletId = (chk.session.outletIds || [])[0] || null;
+    if (!outletId) {
+      var ids0 = (chk.session.outletIds || []).filter(function (x) { return x !== '*'; });
+      outletId = ids0[0] || null;
+    }
+    if (!outletId) return Promise.resolve(bad({ success: false, message: 'Outlet tidak jelas.' }));
+    if (!sessionCanOutlet(chk.session, outletId)) {
+      return Promise.resolve(forbidden({ success: false, message: 'Outlet di luar wewenang Anda.' }));
+    }
+    return pasarTableReady().then(function (ready) {
+      if (!ready) return bad({ success: false, message: 'Tabel pasar_logs belum ada. Jalankan SQL batch dulu.' });
+      var photo = String(body.photo || '');
+      if (photo.length > 700000) {
+        return bad({ success: false, message: 'Foto terlalu besar (maks ~500KB).' });
+      }
+      var totalCost = Math.round(Number(body.total_cost) || 0);
+      var buyer = String(body.buyer || chk.session.name || '').slice(0, 60);
+      var note = String(body.note || '').slice(0, 200);
+      var unit = String(body.unit || '').slice(0, 20);
+      // Cari / buat bahan di outlet ini
+      function findOrCreate() {
+        if (body.ingredient_id) {
+          return sel('ingredients', 'select=*&id=eq.' + encodeURIComponent(body.ingredient_id) + '&outlet_id=eq.' + encodeURIComponent(outletId) + '&limit=1', { allOutlets: true })
+            .then(function (rows) {
+              if (!rows.length) return null;
+              return rows[0];
+            });
+        }
+        var nm = String(body.ingredient_name || '').trim().slice(0, 80);
+        if (!nm) return Promise.resolve(null);
+        return sel('ingredients', 'select=*&outlet_id=eq.' + encodeURIComponent(outletId) + '&limit=500', { allOutlets: true })
+          .then(function (rows) {
+            var found = (rows || []).find(function (r) { return (r.name || '').toLowerCase() === nm.toLowerCase(); });
+            if (found) return found;
+            var row = {
+              id: uid('ing'), name: nm, unit: unit || 'kg',
+              current_stock: 0, min_stock_alert: 0, cost_per_unit: qty > 0 ? Math.round(totalCost / qty) : 0,
+              outlet_id: outletId
+            };
+            return rawIns('ingredients', [row]).then(function (nr) { return nr[0]; });
+          });
+      }
+      return findOrCreate().then(function (ing) {
+        if (!ing) return bad({ success: false, message: 'Bahan tidak ditemukan / nama kosong.' });
+        var nb = Math.round(((Number(ing.current_stock) || 0) + qty) * 1000) / 1000;
+        var entry = {
+          id: uid('psr'), outlet_id: outletId,
+          ingredient_id: ing.id, ingredient_name: ing.name,
+          qty: qty, unit: unit || ing.unit || '',
+          total_cost: totalCost, photo: photo || null,
+          note: note, buyer: buyer
+        };
+        return upd('ingredients', 'id=eq.' + encodeURIComponent(ing.id), { current_stock: nb }, { allOutlets: true })
+          .then(function () { return rawIns('pasar_logs', [entry]); })
+          .then(function () {
+            return ins('stock_logs', [{
+              id: uid('log'), ingredient_id: ing.id, ingredient_name: ing.name,
+              type: 'IN_PASAR', change_qty: qty, balance_qty: nb, unit: ing.unit || '',
+              reference: 'Belanja pasar (' + buyer + ')',
+              note: (note ? note + ' ' : '') + '(Rp ' + totalCost.toLocaleString('id-ID') + ')'
+            }]).catch(function () {});
+          })
+          .then(function () { return ok({ success: true, log: entry }); });
+      });
+    }).catch(serverError);
+  };
+
+  // 15e. GET /api/owner/pasar — riwayat belanja pasar (?outlet_id=)
+  routes['GET /api/owner/pasar'] = function (body, query) {
+    var chk = getPortalSession();
+    if (!chk) return Promise.resolve(unauthorized({ success: false, message: 'Sesi berakhir.' }));
+    return pasarTableReady().then(function (ready) {
+      if (!ready) return ok({ success: true, logs: [] });
+      var q = 'select=*&order=created_at.desc&limit=200';
+      if (query && query.outlet_id) q += '&outlet_id=eq.' + encodeURIComponent(query.outlet_id);
+      return rawSel('pasar_logs', q).then(function (rows) {
+        var list = (rows || []).map(function (r) {
+          return {
+            id: r.id, outletId: r.outlet_id, ingredientId: r.ingredient_id,
+            ingredientName: r.ingredient_name, qty: Number(r.qty) || 0, unit: r.unit || '',
+            totalCost: Number(r.total_cost) || 0, hasPhoto: !!r.photo,
+            note: r.note || '', buyer: r.buyer || '', createdAt: r.created_at
+          };
+        });
+        if (chk.role !== 'owner' && chk.outletIds) {
+          var ids = chk.outletIds.filter(function (x) { return x !== '*'; });
+          list = list.filter(function (x) { return ids.indexOf(x.outletId) >= 0; });
+        }
+        return ok({ success: true, logs: list });
+      });
     }).catch(serverError);
   };
 
@@ -4055,14 +4530,16 @@
     return sel('orders', 'select=*&id=eq.' + encodeURIComponent(orderId)).then(function (orows) {
       if (!orows.length) return notFound({ success: false, message: 'Order tidak ditemukan' });
       var o = orows[0];
-      if (o.status !== 'completed') {
-        return bad({ success: false, message: 'Order tidak bisa di-void (status: ' + (o.status || '-') + '). Hanya order completed yang bisa di-void, dan tidak bisa 2x.' });
+      var isPending = (o.status === 'pending');
+      if (o.status !== 'completed' && !isPending) {
+        return bad({ success: false, message: 'Order tidak bisa di-void (status: ' + (o.status || '-') + '). Hanya order completed/pending yang bisa di-void, dan tidak bisa 2x.' });
       }
-      var reversalP = tryVoidReversal(o).catch(function (e) {
+      // Pending (QR): stok tak pernah dipotong & tak ada jurnal -> lewati keduanya.
+      var reversalP = isPending ? Promise.resolve(null) : tryVoidReversal(o).catch(function (e) {
         console.error('[api-supabase] reversal void gagal:', e && e.message);
         return null;
       });
-      var restoreP = restoreStockForVoid(o).catch(function (e) {
+      var restoreP = (isPending ? Promise.resolve(null) : restoreStockForVoid(o)).catch(function (e) {
         console.error('[api-supabase] restore stok void gagal:', e && e.message);
         return null;
       });
@@ -4105,6 +4582,141 @@
         });
       });
     }).catch(serverError);
+  };
+
+  // 44a2. GET /api/hq/dashboard — dashboard eksekutif multi-outlet (owner only).
+  //      ?period=today|7d|30d
+  //      Per outlet: omzet, transaksi, rata2 struk, HPP ideal vs aktual,
+  //      variansi % (+flag anomali >3%), biaya waste.
+  //      Menu engineering: klasifikasi Star/Plowhorse/Puzzle/Dog per menu.
+  routes['GET /api/hq/dashboard'] = function (body, query) {
+    var chk = requirePortal(ROLE_OWNER);
+    if (!chk.ok) return Promise.resolve(chk.res);
+    var period = String((query && query.period) || '7d');
+    var now = new Date();
+    var from;
+    if (period === 'today') { from = new Date(now); from.setHours(0, 0, 0, 0); }
+    else if (period === '30d') { from = new Date(now.getTime() - 30 * 864e5); }
+    else { period = '7d'; from = new Date(now.getTime() - 7 * 864e5); }
+    var fromIso = from.toISOString();
+    return rawSel('outlets', 'select=id,name,active&active=eq.true&order=name.asc')
+      .then(function (outlets) {
+        outlets = outlets || [];
+        var oids = outlets.map(function (o) { return o.id; });
+        if (!oids.length) return ok({ success: true, period: period, outlets: [], menuMatrix: [] });
+        var inList = oids.map(encodeURIComponent).join(',');
+        // Order completed (bukan void) dalam periode
+        return rawSel('orders', 'select=id,outlet_id,total,items,created_at&status=eq.completed' +
+          '&outlet_id=in.(' + inList + ')&created_at=gte.' + encodeURIComponent(fromIso) + '&limit=5000')
+          .then(function (orders) {
+            // Ambil semua menu (utk cost_price) — satu query
+            return rawSel('menu_items', 'select=id,name,price_value,cost_price&limit=2000')
+              .then(function (menus) { return { orders: orders || [], menus: menus || [] }; });
+          })
+          .then(function (ctx) {
+            var orders = ctx.orders, menus = ctx.menus;
+            var menuMap = {};
+            menus.forEach(function (m) { menuMap[m.id] = m; });
+            // Agregasi per outlet
+            var agg = {};
+            oids.forEach(function (oid) {
+              agg[oid] = { revenue: 0, txn: 0, idealCost: 0, menuQty: {}, menuRev: {} };
+            });
+            orders.forEach(function (o) {
+              var a = agg[o.outlet_id];
+              if (!a) return;
+              a.revenue += Math.round(Number(o.total) || 0);
+              a.txn += 1;
+              (o.items || []).forEach(function (it) {
+                var qty = Number(it.qty) || 0;
+                var m = menuMap[it.id];
+                var cp = m ? (Number(m.cost_price) || 0) : 0;
+                a.idealCost += Math.round(cp * qty);
+                a.menuQty[it.id] = (a.menuQty[it.id] || 0) + qty;
+                a.menuRev[it.id] = (a.menuRev[it.id] || 0) + Math.round((Number(it.price) || 0) * qty);
+              });
+            });
+            // Stok keluar (aktual) + waste dalam periode
+            return rawSel('stock_logs', 'select=ingredient_id,ingredient_name,type,change_qty,created_at' +
+              '&type=in.(OUT_SALE,OUT_WASTE)&created_at=gte.' + encodeURIComponent(fromIso) + '&limit=5000')
+              .then(function (logs) {
+                return rawSel('ingredients', 'select=id,outlet_id,cost_per_unit&limit=2000')
+                  .then(function (ings) { return { logs: logs || [], ings: ings || [] }; });
+              })
+              .then(function (ctx2) {
+                var costMap = {};
+                ctx2.ings.forEach(function (g) { costMap[g.id] = Number(g.cost_per_unit) || 0; });
+                // Aktual per outlet: butuh outlet bahan -> cari dari ingredients
+                var ingOutlet = {};
+                ctx2.ings.forEach(function (g) { ingOutlet[g.id] = g.outlet_id; });
+                ctx2.logs.forEach(function (l) {
+                  var oid = ingOutlet[l.ingredient_id];
+                  var a = oid && agg[oid];
+                  if (!a) return;
+                  var c = costMap[l.ingredient_id] || 0;
+                  var val = Math.round(Math.abs(Number(l.change_qty) || 0) * c);
+                  a.actualCost = (a.actualCost || 0) + val;
+                  if (l.type === 'OUT_WASTE') a.wasteCost = (a.wasteCost || 0) + val;
+                });
+                var outletRows = outlets.map(function (o) {
+                  var a = agg[o.id];
+                  var actual = Math.round(a.actualCost || 0);
+                  var ideal = Math.round(a.idealCost || 0);
+                  var variance = actual - ideal;
+                  var variancePct = ideal > 0 ? Math.round(variance / ideal * 1000) / 10 : 0;
+                  return {
+                    id: o.id, name: o.name,
+                    revenue: a.revenue, txn: a.txn,
+                    avgTicket: a.txn ? Math.round(a.revenue / a.txn) : 0,
+                    idealCost: ideal, actualCost: actual,
+                    variance: variance, variancePct: variancePct,
+                    anomaly: variancePct > 3,
+                    wasteCost: Math.round(a.wasteCost || 0)
+                  };
+                });
+                // Menu engineering (konsolidasi semua outlet)
+                var mAgg = {};
+                oids.forEach(function (oid) {
+                  var a = agg[oid];
+                  Object.keys(a.menuQty).forEach(function (mid) {
+                    if (!mAgg[mid]) mAgg[mid] = { qty: 0, rev: 0, cost: 0, name: (menuMap[mid] && menuMap[mid].name) || mid };
+                    mAgg[mid].qty += a.menuQty[mid];
+                    mAgg[mid].rev += a.menuRev[mid];
+                    var cp = menuMap[mid] ? (Number(menuMap[mid].cost_price) || 0) : 0;
+                    mAgg[mid].cost += Math.round(cp * a.menuQty[mid]);
+                  });
+                });
+                var mList = Object.keys(mAgg).map(function (mid) {
+                  var m = mAgg[mid];
+                  return { id: mid, name: m.name, qty: m.qty, revenue: m.rev, cost: m.cost, margin: m.rev - m.cost };
+                }).filter(function (m) { return m.qty > 0; });
+                var avgQty = mList.length ? mList.reduce(function (s, m) { return s + m.qty; }, 0) / mList.length : 0;
+                var avgMargin = mList.length ? mList.reduce(function (s, m) { return s + m.margin; }, 0) / mList.length : 0;
+                var matrix = { stars: [], plowhorses: [], puzzles: [], dogs: [] };
+                mList.forEach(function (m) {
+                  var hiVol = m.qty >= avgQty, hiMar = m.margin >= avgMargin;
+                  var entry = { id: m.id, name: m.name, qty: m.qty, revenue: m.revenue, margin: m.margin };
+                  if (hiVol && hiMar) matrix.stars.push(entry);
+                  else if (hiVol && !hiMar) matrix.plowhorses.push(entry);
+                  else if (!hiVol && hiMar) matrix.puzzles.push(entry);
+                  else matrix.dogs.push(entry);
+                });
+                ['stars', 'plowhorses', 'puzzles', 'dogs'].forEach(function (k) {
+                  matrix[k].sort(function (a, b) { return b.qty - a.qty; });
+                  matrix[k] = matrix[k].slice(0, 10);
+                });
+                var totRev = outletRows.reduce(function (s, o) { return s + o.revenue; }, 0);
+                var totTxn = outletRows.reduce(function (s, o) { return s + o.txn; }, 0);
+                return ok({
+                  success: true, period: period,
+                  summary: { revenue: totRev, txn: totTxn, avgTicket: totTxn ? Math.round(totRev / totTxn) : 0 },
+                  outlets: outletRows,
+                  menuMatrix: matrix,
+                  note: 'HPP aktual = estimasi dari mutasi stok × harga beli terakhir.'
+                });
+              });
+          });
+      }).catch(serverError);
   };
 
   // 44b. GET /api/owner/void-logs — laporan void: daftar pembatalan order
