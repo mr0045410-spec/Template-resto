@@ -2,7 +2,7 @@
 <html lang="id">
 <head>
   <script src="brand-config.js"></script>
-  <script src="api-supabase.js?v=20261003g"></script>
+  <script src="api-supabase.js?v=20261003h"></script>
   <!-- api-shim: ganti /api/* dgn localStorage (perbaikan persistensi utk hosting statis) -->
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
@@ -848,6 +848,25 @@
           </button>
         </div>
         <div id="staff-open-shift-note"></div>
+        <!-- Rekap kas: ringkasan dari daftar shift yang tampil -->
+        <div class="grid grid-cols-2 lg:grid-cols-4 gap-3 mb-4">
+          <div class="rounded-2xl bg-stone-50 border border-stone-200/70 px-4 py-3">
+            <div class="text-[10px] font-bold uppercase tracking-wider text-stone-400">Jumlah Shift</div>
+            <div id="shift-rekap-count" class="text-lg font-black text-[#450A0A] font-mono">0</div>
+          </div>
+          <div class="rounded-2xl bg-stone-50 border border-stone-200/70 px-4 py-3">
+            <div class="text-[10px] font-bold uppercase tracking-wider text-stone-400">Total Modal Awal</div>
+            <div id="shift-rekap-opening" class="text-lg font-black text-[#450A0A] font-mono">Rp 0</div>
+          </div>
+          <div class="rounded-2xl bg-stone-50 border border-stone-200/70 px-4 py-3">
+            <div class="text-[10px] font-bold uppercase tracking-wider text-stone-400">Total Jual Tunai</div>
+            <div id="shift-rekap-cash" class="text-lg font-black text-emerald-700 font-mono">Rp 0</div>
+          </div>
+          <div class="rounded-2xl bg-stone-50 border border-stone-200/70 px-4 py-3">
+            <div class="text-[10px] font-bold uppercase tracking-wider text-stone-400">Total Selisih</div>
+            <div id="shift-rekap-diff" class="text-lg font-black font-mono">Rp 0</div>
+          </div>
+        </div>
         <div class="overflow-x-auto">
           <table class="w-full text-xs">
             <thead>
@@ -860,11 +879,12 @@
                 <th class="py-2 pr-3 font-bold text-right">Kas Harapan</th>
                 <th class="py-2 pr-3 font-bold text-right">Kas Fisik</th>
                 <th class="py-2 pr-3 font-bold text-right">Selisih</th>
-                <th class="py-2 font-bold">Catatan</th>
+                <th class="py-2 pr-3 font-bold">Catatan</th>
+                <th class="py-2 font-bold text-center">Aksi</th>
               </tr>
             </thead>
             <tbody id="staff-shift-list">
-              <tr><td colspan="9" class="py-6 text-center text-stone-400">Memuat...</td></tr>
+              <tr><td colspan="10" class="py-6 text-center text-stone-400">Memuat...</td></tr>
             </tbody>
           </table>
         </div>
@@ -1563,6 +1583,29 @@
           <button type="button" onclick="closeRefundModal()" class="flex-1 px-4 py-2.5 rounded-2xl bg-stone-100 hover:bg-stone-200 text-stone-700 text-sm font-bold transition-colors">Batal</button>
           <button type="button" id="refund-submit-btn" onclick="submitRefundOrder()" class="flex-1 px-4 py-2.5 rounded-2xl bg-amber-600 hover:bg-amber-700 text-white text-sm font-bold transition-colors">Refund Sekarang</button>
         </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- MODAL: Detail Shift -->
+  <div id="shift-detail-modal" class="hidden fixed inset-0 z-50 flex items-center justify-center p-4 bg-[#450A0A]/80 backdrop-blur-sm">
+    <div class="w-full max-w-lg bg-white rounded-3xl shadow-2xl border border-stone-200 overflow-hidden">
+      <div class="flex items-center justify-between p-5 sm:p-6 border-b border-stone-100">
+        <div>
+          <h4 class="text-sm font-extrabold text-[#450A0A] flex items-center gap-2">
+            <i data-lucide="clipboard-list" class="w-4 h-4 text-brand"></i>Detail Shift
+          </h4>
+          <p id="shift-detail-sub" class="text-[11px] text-stone-400 mt-0.5">-</p>
+        </div>
+        <button onclick="closeShiftDetail()" class="p-1 rounded-full text-stone-400 hover:text-stone-700">
+          <i data-lucide="x" class="w-4 h-4"></i>
+        </button>
+      </div>
+      <div id="shift-detail-body" class="p-5 sm:p-6 space-y-4 text-xs max-h-[70vh] overflow-y-auto">
+        <p class="text-stone-400 italic">Memuat...</p>
+      </div>
+      <div class="p-4 border-t border-stone-100">
+        <button onclick="closeShiftDetail()" class="w-full py-2.5 rounded-2xl bg-stone-100 hover:bg-stone-200 text-stone-700 text-sm font-bold transition-colors">Tutup</button>
       </div>
     </div>
   </div>
@@ -2936,6 +2979,105 @@
         </tr>`).join('');
     }
 
+    // --- Detail shift: rincian order + pembayaran + void/refund dalam shift ---
+    async function openShiftDetail(shiftId) {
+      const modal = document.getElementById('shift-detail-modal');
+      const body = document.getElementById('shift-detail-body');
+      const sub = document.getElementById('shift-detail-sub');
+      if (!modal || !body) return;
+      modal.classList.remove('hidden');
+      body.innerHTML = '<p class="text-stone-400 italic">Memuat...</p>';
+      if (sub) sub.textContent = '-';
+      try {
+        const res = await fetch('/api/owner/shift-detail?shift_id=' + encodeURIComponent(shiftId));
+        const data = await res.json();
+        if (!data.success || !data.detail) throw new Error(data.message || 'Gagal memuat detail');
+        const d = data.detail, s = d.shift, m = d.summary;
+        if (sub) sub.textContent = `${s.employeeName} • ${fmtShiftDate(s.openedAt)} → ${s.status === 'closed' ? fmtShiftDate(s.closedAt) : 'masih buka'}`;
+        const kpi = (label, val, cls) => `
+          <div class="rounded-2xl bg-stone-50 border border-stone-200/70 px-3 py-2.5">
+            <div class="text-[10px] font-bold uppercase tracking-wider text-stone-400">${label}</div>
+            <div class="text-sm font-black font-mono ${cls || 'text-[#450A0A]'}">${val}</div>
+          </div>`;
+        const diffTxt = s.status !== 'closed' ? '—' : (s.difference === 0 ? 'PAS' : (s.difference > 0 ? '+' + formatRupiah(s.difference) : '−' + formatRupiah(Math.abs(s.difference))));
+        body.innerHTML = `
+          <div>
+            <div class="text-[11px] font-bold uppercase tracking-wider text-stone-400 mb-2">Ringkasan Kas</div>
+            <div class="grid grid-cols-2 sm:grid-cols-3 gap-2">
+              ${kpi('Modal Awal', formatRupiah(s.openingCash))}
+              ${kpi('Jual Tunai', formatRupiah(s.cashSales), 'text-emerald-700')}
+              ${kpi('Refund Keluar', formatRupiah(m.refundTotal), 'text-amber-600')}
+              ${kpi('Kas Harapan', s.expectedCash !== null ? formatRupiah(s.expectedCash) : '—')}
+              ${kpi('Kas Fisik', s.closingCash !== null ? formatRupiah(s.closingCash) : '—')}
+              ${kpi('Selisih', diffTxt, s.status !== 'closed' ? '' : (s.difference === 0 ? 'text-emerald-700' : (s.difference > 0 ? 'text-blue-700' : 'text-rose-600')))}
+            </div>
+            <p class="text-[10px] text-stone-400 mt-1.5">Kas harapan = modal awal + jual tunai − refund keluar.</p>
+          </div>
+          <div>
+            <div class="text-[11px] font-bold uppercase tracking-wider text-stone-400 mb-2">Ringkasan Penjualan</div>
+            <div class="grid grid-cols-2 sm:grid-cols-3 gap-2">
+              ${kpi('Order', m.orderCount + 'x')}
+              ${kpi('Omset', formatRupiah(m.omset), 'text-emerald-700')}
+              ${kpi('Diskon', formatRupiah(m.discountTotal))}
+              ${kpi('Tunai', formatRupiah(m.cashTotal))}
+              ${kpi('QRIS/Non-tunai', formatRupiah(m.qrisTotal))}
+              ${kpi('Void', m.voidCount + 'x • ' + formatRupiah(m.voidTotal), 'text-rose-600')}
+            </div>
+            ${s.notes ? `<p class="text-[11px] text-stone-500 mt-2"><span class="font-bold">Catatan:</span> ${escapeOwnerHtml(s.notes)}</p>` : ''}
+          </div>
+          <div>
+            <div class="text-[11px] font-bold uppercase tracking-wider text-stone-400 mb-2">Daftar Order (${d.orders.length})</div>
+            <div class="max-h-56 overflow-y-auto border border-stone-100 rounded-2xl divide-y divide-stone-100">
+              ${d.orders.length ? d.orders.map(o => `
+                <div class="flex items-center justify-between px-3 py-2">
+                  <div class="min-w-0">
+                    <p class="font-mono font-bold text-[#450A0A] truncate">${o.id}
+                      ${o.status === 'voided' ? '<span class="ml-1 px-1.5 py-0.5 rounded text-[9px] font-black bg-rose-600 text-white">VOID</span>' : ''}
+                    </p>
+                    <p class="text-[10px] text-stone-400">${fmtShiftDate(o.createdAt)} • ${escapeOwnerHtml(o.tableOrCustomer) || '-'} • ${String(o.paymentMethod).toUpperCase()}</p>
+                  </div>
+                  <span class="font-mono font-bold ${o.status === 'voided' ? 'text-stone-400 line-through' : 'text-[#450A0A]'}">${formatRupiah(o.total)}</span>
+                </div>`).join('') : '<p class="px-3 py-4 text-center text-stone-400 italic">Belum ada order di shift ini.</p>'}
+            </div>
+          </div>
+          ${d.refunds.length ? `
+          <div>
+            <div class="text-[11px] font-bold uppercase tracking-wider text-stone-400 mb-2">Refund (${d.refunds.length})</div>
+            <div class="space-y-1">
+              ${d.refunds.map(r => `
+                <div class="flex items-center justify-between px-3 py-2 rounded-xl bg-amber-50 border border-amber-100">
+                  <div><p class="font-mono font-bold text-amber-800">${r.orderId}</p><p class="text-[10px] text-amber-600">${escapeOwnerHtml(r.reason)}</p></div>
+                  <span class="font-mono font-bold text-amber-700">${formatRupiah(r.amount)}</span>
+                </div>`).join('')}
+            </div>
+          </div>` : ''}`;
+        lucide.createIcons();
+      } catch (err) {
+        console.error('Error loading shift detail:', err);
+        body.innerHTML = '<p class="text-stone-400 italic">Gagal memuat detail shift.</p>';
+      }
+    }
+    function closeShiftDetail() {
+      document.getElementById('shift-detail-modal').classList.add('hidden');
+    }
+
+    // --- Rekap kas: ringkasan dari daftar shift ---
+    function updateShiftRekap(shifts) {
+      const set = (id, txt) => { const el = document.getElementById(id); if (el) el.textContent = txt; };
+      const closed = shifts.filter(s => s.status === 'closed');
+      const opening = shifts.reduce((a, s) => a + (Number(s.openingCash) || 0), 0);
+      const cash = closed.reduce((a, s) => a + (Number(s.cashSales) || 0), 0);
+      const diff = closed.reduce((a, s) => a + (Number(s.difference) || 0), 0);
+      set('shift-rekap-count', String(shifts.length));
+      set('shift-rekap-opening', formatRupiah(opening));
+      set('shift-rekap-cash', formatRupiah(cash));
+      const diffEl = document.getElementById('shift-rekap-diff');
+      if (diffEl) {
+        diffEl.textContent = diff === 0 ? 'PAS' : (diff > 0 ? '+' + formatRupiah(diff) : '−' + formatRupiah(Math.abs(diff)));
+        diffEl.className = 'text-lg font-black font-mono ' + (diff === 0 ? 'text-emerald-700' : (diff > 0 ? 'text-blue-700' : 'text-rose-600'));
+      }
+    }
+
     function renderStaffShifts(shifts) {
       const tbody = document.getElementById('staff-shift-list');
       const noteEl = document.getElementById('staff-open-shift-note');
@@ -2950,9 +3092,11 @@
         noteEl.innerHTML = '';
       }
       if (!shifts.length) {
-        tbody.innerHTML = '<tr><td colspan="9" class="py-6 text-center text-stone-400">Belum ada riwayat shift.</td></tr>';
+        tbody.innerHTML = '<tr><td colspan="10" class="py-6 text-center text-stone-400">Belum ada riwayat shift.</td></tr>';
+        updateShiftRekap([]);
         return;
       }
+      updateShiftRekap(shifts);
       tbody.innerHTML = shifts.map(s => {
         const diff = s.difference;
         const diffCls = s.status !== 'closed' ? 'text-stone-400'
@@ -2973,6 +3117,9 @@
           <td class="py-2.5 pr-3 text-right font-mono">${s.closingCash !== null && s.closingCash !== undefined ? formatRupiah(s.closingCash) : '—'}</td>
           <td class="py-2.5 pr-3 text-right font-mono font-black ${diffCls}">${diffTxt}</td>
           <td class="py-2 text-stone-400 max-w-[140px] truncate" title="${escapeOwnerHtml(s.notes)}">${escapeOwnerHtml(s.notes) || '—'}</td>
+          <td class="py-2 text-center whitespace-nowrap">
+            <button onclick="openShiftDetail('${s.id}')" class="px-2.5 py-1 rounded-lg bg-stone-100 hover:bg-stone-200 text-stone-700 border border-stone-200 text-[10px] font-bold transition-colors" title="Lihat rincian shift">Detail</button>
+          </td>
         </tr>`;
       }).join('');
     }
