@@ -414,7 +414,7 @@
   window.wTSQR = () => {
     if (!TS_TABLE) return;
     const t = TS_TABLE;
-    const url = location.origin + '/qr.html?outlet=' + encodeURIComponent(OUTLET) + '&table=' + encodeURIComponent(t.number);
+    const url = location.origin + '/qr.html?outlet=' + encodeURIComponent(OUTLET) + '&meja=' + encodeURIComponent(t.number);
     $('w-qr-table').textContent = 'Meja ' + t.number;
     $('w-qr-url').textContent = url;
     const box = $('w-qr-code');
