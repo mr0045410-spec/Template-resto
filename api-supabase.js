@@ -1705,6 +1705,8 @@
             if (!hasPhone) delete row.customer_name;
             return ins('orders', [row]);
           }).then(function () {
+            // Tandai meja occupied (non-fatal)
+            setTableBusy(outletId, table, orderId).catch(function () {});
             return created({ success: true, order: { id: orderId, total: total, table: table } });
           });
         });
@@ -1749,6 +1751,14 @@
       }).catch(serverError);
   };
 
+  // 8b2b. GET /api/outlets-public — daftar outlet aktif (utk lock perangkat).
+  routes['GET /api/outlets-public'] = function () {
+    return rawSel('outlets', 'select=id,name&active=eq.true&order=name.asc&limit=50')
+      .then(function (rows) {
+        return ok({ success: true, outlets: (rows || []).map(function (o) { return { id: o.id, name: o.name }; }) });
+      }).catch(serverError);
+  };
+
   // 8b3. GET /api/outlet-public — nama outlet utk halaman tamu (?id=).
   routes['GET /api/outlet-public'] = function (body, query) {
     var id = String((query && query.id) || '');
@@ -1759,6 +1769,247 @@
         return ok({ success: true, name: rows[0].name });
       }).catch(serverError);
   };
+
+  // 8b5. Harga per kanal — probe tabel menu_channel_prices.
+  var _hasChanPrice = null;
+  function chanPriceReady() {
+    if (_hasChanPrice !== null) return Promise.resolve(_hasChanPrice);
+    return rawSel('menu_channel_prices', 'select=menu_id&limit=1').then(function () {
+      _hasChanPrice = true; return true;
+    }).catch(function () { _hasChanPrice = false; return false; });
+  }
+  var VALID_CHANNELS = ['dine_in', 'takeaway', 'gofood', 'grabfood', 'shopeefood'];
+  // GET /api/menu/channel-prices?outlet_id=X — map {menu_id: {channel: price}}
+  routes['GET /api/menu/channel-prices'] = function (body, query) {
+    return chanPriceReady().then(function (ready) {
+      if (!ready) return ok({ success: true, prices: {}, needSql: true });
+      var outletId = (query && query.outlet_id) || null;
+      if (!outletId) {
+        return outletReady().then(function (r) {
+          var oid = r ? currentOutletId() : null;
+          if (!oid || oid === 'ALL' || oid.indexOf(',') >= 0) return bad({ success: false, message: 'outlet_id wajib.' });
+          return getChanPrices(oid);
+        });
+      }
+      return getChanPrices(outletId);
+    }).catch(serverError);
+  };
+  function getChanPrices(outletId) {
+    return rawSel('menu_channel_prices', 'select=menu_id,channel,price&outlet_id=eq.' + encodeURIComponent(outletId) + '&limit=2000')
+      .then(function (rows) {
+        var map = {};
+        (rows || []).forEach(function (r) {
+          if (!map[r.menu_id]) map[r.menu_id] = {};
+          map[r.menu_id][r.channel] = Math.round(Number(r.price) || 0);
+        });
+        return ok({ success: true, prices: map });
+      });
+  }
+  // POST /api/owner/menu-prices — set harga kanal (owner/AM; SM hanya outletnya)
+  routes['POST /api/owner/menu-prices'] = function (body) {
+    var chk = requirePortal(ROLE_ALL_MGR);
+    if (!chk.ok) return Promise.resolve(chk.res);
+    return chanPriceReady().then(function (ready) {
+      if (!ready) return bad({ success: false, message: 'Tabel menu_channel_prices belum ada. Jalankan SQL dulu.' });
+      var outletId = body.outlet_id;
+      var channel = String(body.channel || '');
+      var price = Math.round(Number(body.price) || 0);
+      if (!outletId || !sessionCanOutlet(chk.session, outletId)) {
+        return Promise.resolve(forbidden({ success: false, message: 'Outlet di luar wewenang.' }));
+      }
+      if (VALID_CHANNELS.indexOf(channel) < 0) return bad({ success: false, message: 'Kanal tidak valid.' });
+      if (price < 0) return bad({ success: false, message: 'Harga tidak valid.' });
+      if (!body.menu_id) return bad({ success: false, message: 'menu_id wajib.' });
+      // Upsert
+      var key = 'menu_id=eq.' + encodeURIComponent(body.menu_id) +
+        '&outlet_id=eq.' + encodeURIComponent(outletId) +
+        '&channel=eq.' + encodeURIComponent(channel);
+      return rawSel('menu_channel_prices', 'select=menu_id&' + key + '&limit=1')
+        .then(function (rows) {
+          if (rows && rows.length) {
+            return rawUpd('menu_channel_prices', key, { price: price, updated_at: new Date().toISOString() });
+          }
+          return rawIns('menu_channel_prices', [{
+            menu_id: body.menu_id, outlet_id: outletId, channel: channel, price: price
+          }]);
+        })
+        .then(function () { return ok({ success: true }); });
+    }).catch(serverError);
+  };
+  // Helper: terapkan harga kanal ke daftar menu (dipakai POS & QR).
+  function applyChannelPrices(menus, outletId, channel) {
+    if (!channel || channel === 'dine_in') return Promise.resolve(menus);
+    return chanPriceReady().then(function (ready) {
+      if (!ready) return menus;
+      return rawSel('menu_channel_prices', 'select=menu_id,price&outlet_id=eq.' + encodeURIComponent(outletId) +
+        '&channel=eq.' + encodeURIComponent(channel) + '&limit=2000')
+        .then(function (rows) {
+          var map = {};
+          (rows || []).forEach(function (r) { map[r.menu_id] = Math.round(Number(r.price) || 0); });
+          return menus.map(function (m) {
+            if (map[m.id] !== undefined && map[m.id] > 0) {
+              m.price = map[m.id];
+              m.channelPrice = true;
+            }
+            return m;
+          });
+        }).catch(function () { return menus; });
+    });
+  }
+
+  // 8b4. Denah meja — probe tabel.
+  var _hasTableTbls = null;
+  function tableTablesReady() {
+    if (_hasTableTbls !== null) return Promise.resolve(_hasTableTbls);
+    return rawSel('dining_tables', 'select=id&limit=1').then(function () {
+      _hasTableTbls = true; return true;
+    }).catch(function () { _hasTableTbls = false; return false; });
+  }
+  // GET /api/tables — denah meja (?outlet_id= utk portal; tanpa itu pakai kunci POS)
+  routes['GET /api/tables'] = function (body, query) {
+    return tableTablesReady().then(function (ready) {
+      if (!ready) return ok({ success: true, areas: [], tables: [], needSql: true });
+      var outletId = (query && query.outlet_id) || null;
+      if (!outletId) {
+        return outletReady().then(function (r) {
+          var oid = r ? currentOutletId() : null;
+          if (!oid || oid === 'ALL' || oid.indexOf(',') >= 0) {
+            return bad({ success: false, message: 'outlet_id wajib.' });
+          }
+          return getTablesFor(oid);
+        });
+      }
+      return getTablesFor(outletId);
+    }).catch(serverError);
+  };
+  function getTablesFor(outletId) {
+    return rawSel('table_areas', 'select=*&outlet_id=eq.' + encodeURIComponent(outletId) + '&order=sort_order.asc&limit=50')
+      .then(function (areas) {
+        return rawSel('dining_tables', 'select=*&outlet_id=eq.' + encodeURIComponent(outletId) + '&order=table_number.asc&limit=200')
+          .then(function (tables) {
+            return ok({
+              success: true,
+              areas: (areas || []).map(function (a) { return { id: a.id, name: a.name, sortOrder: a.sort_order || 0 }; }),
+              tables: (tables || []).map(function (t) {
+                return {
+                  id: t.id, areaId: t.area_id, number: t.table_number,
+                  capacity: t.capacity || 4, status: t.status || 'free',
+                  currentOrderId: t.current_order_id || null
+                };
+              })
+            });
+          });
+      });
+  }
+  // POST /api/owner/table-areas — kelola area (owner/AM/SM)
+  routes['POST /api/owner/table-areas'] = function (body) {
+    var chk = requirePortal(ROLE_ALL_MGR);
+    if (!chk.ok) return Promise.resolve(chk.res);
+    return tableTablesReady().then(function (ready) {
+      if (!ready) return bad({ success: false, message: 'Tabel denah meja belum ada. Jalankan SQL dulu.' });
+      var action = body.action || 'create';
+      var outletId = body.outlet_id;
+      if (!outletId || !sessionCanOutlet(chk.session, outletId)) {
+        return Promise.resolve(forbidden({ success: false, message: 'Outlet di luar wewenang.' }));
+      }
+      if (action === 'create') {
+        var row = { id: uid('area'), outlet_id: outletId, name: String(body.name || '').slice(0, 40) || 'Area Baru', sort_order: Number(body.sort_order) || 0 };
+        return rawIns('table_areas', [row]).then(function (nr) { return ok({ success: true, area: nr[0] }); });
+      }
+      if (action === 'delete') {
+        return rawDel('table_areas', 'id=eq.' + encodeURIComponent(body.id)).then(function () {
+          return ok({ success: true });
+        });
+      }
+      // update
+      var patch = {};
+      if (body.name) patch.name = String(body.name).slice(0, 40);
+      if (body.sort_order !== undefined) patch.sort_order = Number(body.sort_order) || 0;
+      return rawUpd('table_areas', 'id=eq.' + encodeURIComponent(body.id), patch).then(function () {
+        return ok({ success: true });
+      });
+    }).catch(serverError);
+  };
+  // POST /api/owner/tables — kelola meja (owner/AM/SM)
+  routes['POST /api/owner/tables'] = function (body) {
+    var chk = requirePortal(ROLE_ALL_MGR);
+    if (!chk.ok) return Promise.resolve(chk.res);
+    return tableTablesReady().then(function (ready) {
+      if (!ready) return bad({ success: false, message: 'Tabel denah meja belum ada. Jalankan SQL dulu.' });
+      var action = body.action || 'create';
+      if (action === 'create') {
+        var outletId = body.outlet_id;
+        if (!outletId || !sessionCanOutlet(chk.session, outletId)) {
+          return Promise.resolve(forbidden({ success: false, message: 'Outlet di luar wewenang.' }));
+        }
+        var row = {
+          id: uid('tbl'), area_id: body.area_id, outlet_id: outletId,
+          table_number: String(body.table_number || '').slice(0, 10),
+          capacity: Math.max(1, parseInt(body.capacity) || 4), status: 'free'
+        };
+        if (!row.table_number || !row.area_id) return bad({ success: false, message: 'Nomor meja & area wajib.' });
+        return rawIns('dining_tables', [row]).then(function (nr) { return ok({ success: true, table: nr[0] }); })
+          .catch(function (e) {
+            if (/duplicate|unique/i.test(e.message)) return bad({ success: false, message: 'Nomor meja sudah ada di outlet ini.' });
+            throw e;
+          });
+      }
+      if (action === 'delete') {
+        return rawDel('dining_tables', 'id=eq.' + encodeURIComponent(body.id)).then(function () {
+          return ok({ success: true });
+        });
+      }
+      // update: nomor, kapasitas, area, status manual
+      var patch = {};
+      if (body.table_number) patch.table_number = String(body.table_number).slice(0, 10);
+      if (body.capacity) patch.capacity = Math.max(1, parseInt(body.capacity) || 4);
+      if (body.area_id) patch.area_id = body.area_id;
+      if (body.status && ['free', 'occupied', 'bill_printed', 'cleaning'].indexOf(body.status) >= 0) patch.status = body.status;
+      return rawUpd('dining_tables', 'id=eq.' + encodeURIComponent(body.id), patch).then(function () {
+        return ok({ success: true });
+      });
+    }).catch(serverError);
+  };
+  // POST /api/pos/table-status — kasir ubah status meja (occupied/free/cleaning)
+  routes['POST /api/pos/table-status'] = function (body) {
+    return tableTablesReady().then(function (ready) {
+      if (!ready) return bad({ success: false, message: 'Denah meja belum aktif.' });
+      return outletReady().then(function (r) {
+        var oid = r ? currentOutletId() : null;
+        if (!oid || oid === 'ALL') return bad({ success: false, message: 'Kunci outlet POS dulu.' });
+        var st = String(body.status || '');
+        if (['free', 'occupied', 'bill_printed', 'cleaning'].indexOf(st) < 0) {
+          return bad({ success: false, message: 'Status tidak valid.' });
+        }
+        var patch = { status: st };
+        if (st === 'free') patch.current_order_id = null;
+        return rawUpd('dining_tables', 'id=eq.' + encodeURIComponent(body.table_id) + '&outlet_id=eq.' + encodeURIComponent(oid), patch)
+          .then(function (nr) {
+            if (!nr || !nr.length) return notFound({ success: false, message: 'Meja tidak ditemukan.' });
+            return ok({ success: true });
+          });
+      });
+    }).catch(serverError);
+  };
+  // Helper internal: tandai meja occupied/free saat order dibuat/dibayar.
+  function setTableBusy(outletId, tableNumber, orderId) {
+    if (!tableNumber) return Promise.resolve();
+    return tableTablesReady().then(function (ready) {
+      if (!ready) return null;
+      return rawUpd('dining_tables',
+        'outlet_id=eq.' + encodeURIComponent(outletId) + '&table_number=eq.' + encodeURIComponent(String(tableNumber)) + '&status=eq.free',
+        { status: 'occupied', current_order_id: orderId }).catch(function () {});
+    });
+  }
+  function setTableFree(outletId, tableNumber) {
+    if (!tableNumber) return Promise.resolve();
+    return tableTablesReady().then(function (ready) {
+      if (!ready) return null;
+      return rawUpd('dining_tables',
+        'outlet_id=eq.' + encodeURIComponent(outletId) + '&table_number=eq.' + encodeURIComponent(String(tableNumber)),
+        { status: 'free', current_order_id: null }).catch(function () {});
+    });
+  }
 
   // 8c. GET /api/pos/pending-orders — daftar order QR pending utk outlet POS ini.
   routes['GET /api/pos/pending-orders'] = function () {
@@ -1802,7 +2053,12 @@
           };
           if (body.shift_id) patch.shift_id = body.shift_id;
           return upd('orders', 'id=eq.' + encodeURIComponent(pid), patch, { allOutlets: true })
-            .then(function () { return deductStockForOrder(pid, o.items || []); })
+            .then(function () {
+              // Meja kembali free setelah bayar (non-fatal)
+              var tbl = String(o.table_or_customer || '').replace(/^Meja\s+/i, '');
+              setTableFree(o.outlet_id, tbl).catch(function () {});
+              return deductStockForOrder(pid, o.items || []);
+            })
             .then(function () {
               return sel('orders', 'select=*&id=eq.' + encodeURIComponent(pid) + '&limit=1', { allOutlets: true });
             })
@@ -2928,6 +3184,150 @@
           list = list.filter(function (x) { return ids.indexOf(x.outletId) >= 0; });
         }
         return ok({ success: true, logs: list });
+      });
+    }).catch(serverError);
+  };
+
+  // 15f. POST /api/owner/prep-batch — produksi bumbu dasar / bahan olahan.
+  //     { outlet_id?, output_ingredient_id?, output_name?, output_qty, output_unit?,
+  //       materials: [{ingredient_id, qty}], note? }
+  //     Bahan mentah dikurangi, bahan hasil ditambah. Butuh tabel prep_batches.
+  var _hasPrepTbl = null;
+  function prepTableReady() {
+    if (_hasPrepTbl !== null) return Promise.resolve(_hasPrepTbl);
+    return rawSel('prep_batches', 'select=id&limit=1').then(function () {
+      _hasPrepTbl = true; return true;
+    }).catch(function () { _hasPrepTbl = false; return false; });
+  }
+  routes['POST /api/owner/prep-batch'] = function (body) {
+    var chk = requirePortal(ROLE_ALL_MGR);
+    if (!chk.ok) return Promise.resolve(chk.res);
+    return prepTableReady().then(function (ready) {
+      if (!ready) return bad({ success: false, message: 'Tabel prep_batches belum ada. Jalankan SQL dulu.' });
+      var outletId = body.outlet_id || null;
+      if (chk.session.role === 'store_manager') outletId = (chk.session.outletIds || [])[0] || null;
+      if (!outletId) {
+        var ids0 = (chk.session.outletIds || []).filter(function (x) { return x !== '*'; });
+        outletId = ids0[0] || null;
+      }
+      if (!outletId || !sessionCanOutlet(chk.session, outletId)) {
+        return Promise.resolve(forbidden({ success: false, message: 'Outlet di luar wewenang.' }));
+      }
+      var outputQty = Number(body.output_qty) || 0;
+      var materials = body.materials || [];
+      if (outputQty <= 0) return bad({ success: false, message: 'Hasil produksi harus > 0.' });
+      if (!materials.length) return bad({ success: false, message: 'Bahan baku kosong.' });
+      // Ambil semua bahan yg terlibat
+      var matIds = materials.map(function (m) { return m.ingredient_id; }).filter(Boolean);
+      return sel('ingredients', 'select=*&id=in.(' + matIds.map(encodeURIComponent).join(',') + ')&outlet_id=eq.' + encodeURIComponent(outletId) + '&limit=200', { allOutlets: true })
+        .then(function (ingRows) {
+          var ingMap = {};
+          (ingRows || []).forEach(function (g) { ingMap[g.id] = g; });
+          // Validasi stok cukup
+          for (var i = 0; i < materials.length; i++) {
+            var mt = materials[i];
+            var ing = ingMap[mt.ingredient_id];
+            var need = Number(mt.qty) || 0;
+            if (!ing) return bad({ success: false, message: 'Bahan tidak ditemukan.' });
+            if (need <= 0) return bad({ success: false, message: 'Jumlah bahan tidak valid.' });
+            if ((Number(ing.current_stock) || 0) < need) {
+              return bad({ success: false, message: 'Stok "' + ing.name + '" kurang (sisa ' + (Number(ing.current_stock) || 0) + ' ' + (ing.unit || '') + ').' });
+            }
+          }
+          // Cari / buat bahan hasil
+          function findOrCreateOutput() {
+            if (body.output_ingredient_id) {
+              return sel('ingredients', 'select=*&id=eq.' + encodeURIComponent(body.output_ingredient_id) + '&outlet_id=eq.' + encodeURIComponent(outletId) + '&limit=1', { allOutlets: true })
+                .then(function (rows) { return rows[0] || null; });
+            }
+            var nm = String(body.output_name || '').trim().slice(0, 80);
+            if (!nm) return Promise.resolve(null);
+            return sel('ingredients', 'select=*&outlet_id=eq.' + encodeURIComponent(outletId) + '&limit=500', { allOutlets: true })
+              .then(function (rows) {
+                var found = (rows || []).find(function (r) { return (r.name || '').toLowerCase() === nm.toLowerCase(); });
+                if (found) return found;
+                var row = {
+                  id: uid('ing'), name: nm, unit: String(body.output_unit || 'kg').slice(0, 20),
+                  current_stock: 0, min_stock_alert: 0, cost_per_unit: 0, outlet_id: outletId
+                };
+                return rawIns('ingredients', [row]).then(function (nr) { return nr[0]; });
+              });
+          }
+          return findOrCreateOutput().then(function (out) {
+            if (!out) return bad({ success: false, message: 'Bahan hasil tidak jelas.' });
+            // Kurangi bahan mentah (satu PATCH per bahan)
+            var ops = [];
+            var logs = [];
+            var finals = {};
+            materials.forEach(function (mt) {
+              var ing = ingMap[mt.ingredient_id];
+              var need = Number(mt.qty) || 0;
+              var nb = Math.round(((Number(ing.current_stock) || 0) - need) * 1000) / 1000;
+              ing.current_stock = nb;
+              finals[ing.id] = nb;
+              logs.push({
+                id: uid('log'), ingredient_id: ing.id, ingredient_name: ing.name,
+                type: 'OUT_PREP', change_qty: -need, balance_qty: nb, unit: ing.unit || '',
+                reference: 'Prep: ' + out.name, note: body.note || ''
+              });
+            });
+            Object.keys(finals).forEach(function (iid) {
+              ops.push(upd('ingredients', 'id=eq.' + encodeURIComponent(iid), { current_stock: finals[iid] }, { allOutlets: true }));
+            });
+            return Promise.all(ops).then(function () {
+              var nbOut = Math.round(((Number(out.current_stock) || 0) + outputQty) * 1000) / 1000;
+              return upd('ingredients', 'id=eq.' + encodeURIComponent(out.id), { current_stock: nbOut }, { allOutlets: true })
+                .then(function () {
+                  logs.push({
+                    id: uid('log'), ingredient_id: out.id, ingredient_name: out.name,
+                    type: 'IN_PREP', change_qty: outputQty, balance_qty: nbOut, unit: out.unit || '',
+                    reference: 'Hasil prep', note: body.note || ''
+                  });
+                  return ins('stock_logs', logs).catch(function () {});
+                })
+                .then(function () {
+                  var entry = {
+                    id: uid('prep'), outlet_id: outletId,
+                    output_ingredient_id: out.id, output_name: out.name,
+                    output_qty: outputQty, output_unit: out.unit || '',
+                    materials: materials.map(function (mt) {
+                      var ig = ingMap[mt.ingredient_id] || {};
+                      return { ingredient_id: mt.ingredient_id, name: ig.name || '', qty: Number(mt.qty) || 0, unit: ig.unit || '' };
+                    }),
+                    note: String(body.note || '').slice(0, 200),
+                    created_by: chk.session.name || chk.session.role
+                  };
+                  return rawIns('prep_batches', [entry]);
+                })
+                .then(function () { return ok({ success: true, message: 'Batch prep tersimpan.' }); });
+            });
+          });
+        });
+    }).catch(serverError);
+  };
+
+  // 15g. GET /api/owner/prep-batches — riwayat batch prep (?outlet_id=)
+  routes['GET /api/owner/prep-batches'] = function (body, query) {
+    var chk = getPortalSession();
+    if (!chk) return Promise.resolve(unauthorized({ success: false, message: 'Sesi berakhir.' }));
+    return prepTableReady().then(function (ready) {
+      if (!ready) return ok({ success: true, batches: [] });
+      var q = 'select=*&order=created_at.desc&limit=100';
+      if (query && query.outlet_id) q += '&outlet_id=eq.' + encodeURIComponent(query.outlet_id);
+      return rawSel('prep_batches', q).then(function (rows) {
+        var list = (rows || []).map(function (r) {
+          return {
+            id: r.id, outletId: r.outlet_id, outputName: r.output_name,
+            outputQty: Number(r.output_qty) || 0, outputUnit: r.output_unit || '',
+            materials: r.materials || [], note: r.note || '',
+            createdBy: r.created_by || '', createdAt: r.created_at
+          };
+        });
+        if (chk.role !== 'owner' && chk.outletIds) {
+          var ids = chk.outletIds.filter(function (x) { return x !== '*'; });
+          list = list.filter(function (x) { return ids.indexOf(x.outletId) >= 0; });
+        }
+        return ok({ success: true, batches: list });
       });
     }).catch(serverError);
   };
