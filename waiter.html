@@ -4,11 +4,23 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
 <title>Waiter</title>
+<script src="brand-config.js"></script>
 <script src="https://cdn.tailwindcss.com"></script>
+<script>
+  tailwind.config = { theme: { extend: { colors: {
+    'brand': (window.BRAND && BRAND.primaryColor) || '#DC2626',
+    'brand-hover': (window.BRAND && BRAND.primaryColorHover) || '#B91C1C',
+    'brand-cream': (window.BRAND && BRAND.creamColor) || '#FEF2F2',
+    'brand-dark': (window.BRAND && BRAND.darkColor) || '#450A0A'
+  } } } };
+</script>
+<script src="https://unpkg.com/lucide@latest"></script>
 <script src="api-supabase.js?v=20261004d"></script>
 <style>
-  body { font-family: system-ui, -apple-system, sans-serif; background: #FEF2F2; }
-  .font-display { font-family: Georgia, serif; }
+  @import url('https://fonts.googleapis.com/css2?family=Karla:wght@400;500;600;700;800&family=Playfair+Display+SC:wght@400;700&family=Space+Mono:wght@400;700&display=swap');
+  body { font-family: 'Karla', system-ui, sans-serif; background-color: #F8F9FA; color: #450A0A; -webkit-tap-highlight-color: transparent; }
+  .font-display { font-family: 'Playfair Display SC', Georgia, serif; }
+  .font-mono-receipt { font-family: 'Space Mono', monospace; }
   .tbl-btn { transition: transform .1s; }
   .tbl-btn:active { transform: scale(.95); }
   #cart-bar { transition: transform .25s; }
@@ -17,31 +29,42 @@
 <body class="min-h-screen pb-32">
 
 <!-- Lock outlet -->
-<div id="waiter-lock" class="fixed inset-0 z-50 bg-[#450A0A] flex items-center justify-center p-6">
-  <div class="bg-white rounded-3xl p-6 w-full max-w-sm">
-    <h2 class="font-display text-xl font-bold text-[#450A0A] mb-1">📋 Waiter App</h2>
+<div id="waiter-lock" class="fixed inset-0 z-50 bg-brand-cream flex items-center justify-center p-6">
+  <div class="bg-white rounded-3xl p-6 w-full max-w-sm shadow-xl border border-stone-200">
+    <div class="flex items-center gap-2 mb-1">
+      <img data-brand-logo src="./assets/logo-my-kitchen.svg" alt="My Kitchen" class="h-8 object-contain">
+      <span class="font-display text-lg text-brand-dark" data-brand-text="name">My Kitchen</span>
+    </div>
+    <h2 class="font-display text-xl font-bold text-brand-dark mb-1">Waiter App</h2>
     <p class="text-xs text-stone-500 mb-4">Pilih outlet & isi nama kamu</p>
     <label class="block text-xs font-bold text-stone-700 mb-1">Outlet</label>
-    <select id="waiter-outlet" class="w-full px-3 py-2.5 rounded-xl border border-stone-300 text-sm mb-3 focus:border-red-600 focus:outline-none"></select>
+    <select id="waiter-outlet" class="w-full px-3 py-2.5 rounded-xl border border-stone-300 text-sm mb-3 focus:border-brand focus:outline-none"></select>
     <label class="block text-xs font-bold text-stone-700 mb-1">Nama Waiter</label>
-    <input id="waiter-name" type="text" maxlength="40" placeholder="mis. Budi" class="w-full px-3 py-2.5 rounded-xl border border-stone-300 text-sm mb-4 focus:border-red-600 focus:outline-none">
-    <button onclick="lockWaiter()" class="w-full py-3 rounded-2xl bg-[#DC2626] hover:bg-[#B91C1C] text-white font-extrabold">Mulai</button>
+    <input id="waiter-name" type="text" maxlength="40" placeholder="mis. Budi" class="w-full px-3 py-2.5 rounded-xl border border-stone-300 text-sm mb-4 focus:border-brand focus:outline-none">
+    <button onclick="lockWaiter()" class="w-full py-3 rounded-2xl bg-brand hover:bg-brand-hover text-white font-extrabold">Mulai</button>
   </div>
 </div>
 
 <!-- Header -->
-<div class="sticky top-0 z-20 bg-[#450A0A] text-white px-4 py-3 shadow-lg">
-  <div class="flex items-center justify-between">
-    <div>
-      <h1 class="font-display text-lg font-bold">📋 <span id="w-outlet-name">Waiter</span></h1>
-      <p class="text-xs text-red-200" id="w-waiter-name"></p>
+<div class="sticky top-0 z-20 bg-white border-b border-stone-200 px-4 py-3 shadow-sm">
+  <div class="flex items-center gap-2">
+    <a href="/" class="flex items-center gap-2 shrink-0">
+      <img data-brand-logo src="./assets/logo-my-kitchen.svg" alt="My Kitchen" class="h-7 object-contain">
+      <span class="font-display text-lg text-brand-dark leading-none" data-brand-text="name">My Kitchen</span>
+    </a>
+    <span class="bg-sky-100 text-sky-900 border border-sky-300 font-extrabold text-[10px] uppercase tracking-wider px-2 py-1 rounded-lg hidden sm:flex items-center gap-1">
+      <i data-lucide="clipboard-list" class="w-3 h-3"></i><span>Waiter</span>
+    </span>
+    <div class="ml-auto text-right">
+      <p class="text-xs font-bold text-brand-dark" id="w-outlet-name">Waiter</p>
+      <p class="text-[10px] text-stone-500" id="w-waiter-name"></p>
     </div>
-    <button onclick="unlockWaiter()" class="text-xs bg-white/20 px-3 py-1.5 rounded-full">Ganti</button>
+    <button onclick="unlockWaiter()" class="p-2 rounded-xl text-stone-400 hover:text-stone-700 hover:bg-stone-100" title="Ganti"><i data-lucide="refresh-cw" class="w-4 h-4"></i></button>
   </div>
   <!-- Tabs -->
   <div class="flex gap-2 mt-2">
-    <button onclick="wShowTab('tables')" id="wtab-tables" class="flex-1 py-2 rounded-xl text-xs font-extrabold bg-white text-[#450A0A]">🪑 Meja</button>
-    <button onclick="wShowTab('orders')" id="wtab-orders" class="flex-1 py-2 rounded-xl text-xs font-extrabold bg-white/20 text-white">🧾 Pesanan</button>
+    <button onclick="wShowTab('tables')" id="wtab-tables" class="flex-1 py-2 rounded-xl text-xs font-extrabold bg-brand-dark text-white">🪑 Meja</button>
+    <button onclick="wShowTab('orders')" id="wtab-orders" class="flex-1 py-2 rounded-xl text-xs font-extrabold bg-stone-100 text-stone-600">🧾 Pesanan</button>
   </div>
 </div>
 
@@ -64,7 +87,7 @@
   <div class="absolute bottom-0 left-0 right-0 bg-[#FEF2F2] rounded-t-3xl max-h-[92vh] flex flex-col">
     <div class="p-4 border-b border-stone-200 flex items-center justify-between sticky top-0 bg-[#FEF2F2] rounded-t-3xl">
       <div>
-        <h3 class="font-extrabold text-[#450A0A]" id="w-sheet-title">Meja -</h3>
+        <h3 class="font-extrabold text-brand-dark" id="w-sheet-title">Meja -</h3>
         <p class="text-[11px] text-stone-500">Pilih menu untuk meja ini</p>
       </div>
       <button onclick="closeWSheet()" class="p-2 rounded-full bg-stone-200 text-stone-600"><span class="text-lg leading-none">×</span></button>
@@ -74,9 +97,9 @@
     <div class="p-3 border-t border-stone-200 bg-white">
       <div class="flex items-center justify-between mb-2 text-sm">
         <span class="text-stone-500"><span id="w-cart-n">0</span> item</span>
-        <span class="font-extrabold text-lg text-[#450A0A]" id="w-cart-total">Rp 0</span>
+        <span class="font-extrabold text-lg text-brand-dark" id="w-cart-total">Rp 0</span>
       </div>
-      <button onclick="wSubmitOrder()" id="w-submit-btn" class="w-full py-3 rounded-2xl bg-[#DC2626] text-white font-extrabold">Kirim ke Dapur</button>
+      <button onclick="wSubmitOrder()" id="w-submit-btn" class="w-full py-3 rounded-2xl bg-brand text-white font-extrabold">Kirim ke Dapur</button>
     </div>
   </div>
 </div>
@@ -146,8 +169,8 @@
     const isT = tab === 'tables';
     $('wtab-body-tables').classList.toggle('hidden', !isT);
     $('wtab-body-orders').classList.toggle('hidden', isT);
-    $('wtab-tables').className = 'flex-1 py-2 rounded-xl text-xs font-extrabold ' + (isT ? 'bg-white text-[#450A0A]' : 'bg-white/20 text-white');
-    $('wtab-orders').className = 'flex-1 py-2 rounded-xl text-xs font-extrabold ' + (!isT ? 'bg-white text-[#450A0A]' : 'bg-white/20 text-white');
+    $('wtab-tables').className = 'flex-1 py-2 rounded-xl text-xs font-extrabold ' + (isT ? 'bg-white text-brand-dark' : 'bg-white/20 text-white');
+    $('wtab-orders').className = 'flex-1 py-2 rounded-xl text-xs font-extrabold ' + (!isT ? 'bg-white text-brand-dark' : 'bg-white/20 text-white');
     if (!isT) loadActiveOrders();
   };
 
@@ -204,7 +227,7 @@
   function renderWCats() {
     const cats = ['all', ...new Set(MENUS.map(m => m.category).filter(Boolean))];
     $('w-cats').innerHTML = cats.map(c =>
-      `<button onclick="wSetCat('${esc(c)}')" class="shrink-0 px-3 py-1.5 rounded-full text-xs font-bold ${c === ACTIVE_CAT ? 'bg-[#450A0A] text-white' : 'bg-white text-stone-600 border border-stone-200'}">${c === 'all' ? 'Semua' : esc(c)}</button>`
+      `<button onclick="wSetCat('${esc(c)}')" class="shrink-0 px-3 py-1.5 rounded-full text-xs font-bold ${c === ACTIVE_CAT ? 'bg-brand-dark text-white' : 'bg-white text-stone-600 border border-stone-200'}">${c === 'all' ? 'Semua' : esc(c)}</button>`
     ).join('');
   }
   window.wSetCat = c => { ACTIVE_CAT = c; renderWCats(); renderWMenu(); };
@@ -217,15 +240,15 @@
       return `
       <div class="bg-white rounded-2xl p-3 flex items-center gap-3 border border-stone-200 ${so ? 'opacity-50' : ''}">
         <div class="flex-1 min-w-0">
-          <p class="font-bold text-sm text-[#450A0A] truncate">${esc(m.name)}</p>
+          <p class="font-bold text-sm text-brand-dark truncate">${esc(m.name)}</p>
           <p class="text-xs text-stone-500">${fmtRp(m.price)}${so ? ' · HABIS' : ''}</p>
         </div>
         ${so ? '' : (q === 0
-          ? `<button onclick="wAdd('${m.id}')" class="px-4 py-2 rounded-xl bg-[#DC2626] text-white text-xs font-extrabold">+</button>`
+          ? `<button onclick="wAdd('${m.id}')" class="px-4 py-2 rounded-xl bg-brand text-white text-xs font-extrabold">+</button>`
           : `<div class="flex items-center gap-2">
                <button onclick="wDec('${m.id}')" class="w-7 h-7 rounded-full bg-stone-200 font-extrabold">−</button>
                <span class="font-extrabold text-sm w-5 text-center">${q}</span>
-               <button onclick="wAdd('${m.id}')" class="w-7 h-7 rounded-full bg-[#DC2626] text-white font-extrabold">+</button>
+               <button onclick="wAdd('${m.id}')" class="w-7 h-7 rounded-full bg-brand text-white font-extrabold">+</button>
              </div>`)}
       </div>`;
     }).join('') : '<p class="text-center text-stone-400 text-sm py-8">Menu kosong.</p>';
@@ -283,5 +306,6 @@
   init();
 })();
 </script>
+<script>lucide.createIcons();</script>
 </body>
 </html>
