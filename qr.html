@@ -1,0 +1,223 @@
+<!DOCTYPE html>
+<html lang="id">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+<title>Pesan Makanan</title>
+<script src="https://cdn.tailwindcss.com"></script>
+<script src="api-supabase.js?v=20261003y"></script>
+<style>
+  body { font-family: system-ui, -apple-system, sans-serif; background: #FEF2F2; }
+  .font-display { font-family: Georgia, serif; }
+  .menu-card:active { transform: scale(.97); }
+  .menu-card { transition: transform .1s; }
+  #cart-bar { transition: transform .25s; }
+  .qty-btn { width: 28px; height: 28px; }
+</style>
+</head>
+<body class="min-h-screen pb-32">
+
+<!-- Header -->
+<div class="sticky top-0 z-20 bg-[#450A0A] text-white px-4 py-3 shadow-lg">
+  <div class="flex items-center justify-between">
+    <div>
+      <h1 class="font-display text-lg font-bold" id="qr-outlet-name">Memuat...</h1>
+      <p class="text-xs text-red-200" id="qr-table-label"></p>
+    </div>
+    <div class="text-2xl">🍽️</div>
+  </div>
+  <div class="flex gap-2 mt-2 overflow-x-auto pb-1" id="qr-cats"></div>
+</div>
+
+<!-- Menu -->
+<div id="qr-menu" class="p-3 space-y-2.5">
+  <p class="text-center text-stone-400 text-sm py-10">Memuat menu...</p>
+</div>
+
+<!-- Cart bar -->
+<div id="cart-bar" class="fixed bottom-0 left-0 right-0 z-30 translate-y-full">
+  <div class="bg-white border-t-2 border-red-100 shadow-[0_-4px_20px_rgba(0,0,0,.12)] p-3">
+    <div id="cart-items" class="max-h-40 overflow-y-auto space-y-2 mb-2"></div>
+    <div class="flex items-center justify-between mb-2 text-sm">
+      <span class="text-stone-500">Total <span class="text-[10px]">(incl. pajak 10%)</span></span>
+      <span class="font-extrabold text-lg text-[#450A0A]" id="cart-total">Rp 0</span>
+    </div>
+    <input id="qr-name" type="text" maxlength="60" placeholder="Nama kamu (opsional)"
+           class="w-full px-3 py-2 rounded-xl border border-stone-300 text-sm mb-2 focus:border-red-600 focus:outline-none">
+    <button onclick="submitQrOrder()" id="qr-submit-btn"
+            class="w-full py-3 rounded-2xl bg-[#DC2626] hover:bg-[#B91C1C] text-white font-extrabold text-base shadow-lg">
+      Pesan Sekarang — Bayar di Kasir
+    </button>
+  </div>
+</div>
+
+<!-- Success -->
+<div id="qr-success" class="hidden fixed inset-0 z-40 bg-[#450A0A]/90 flex items-center justify-center p-6">
+  <div class="bg-white rounded-3xl p-6 max-w-sm w-full text-center">
+    <div class="text-5xl mb-3">✅</div>
+    <h2 class="font-display text-xl font-bold text-[#450A0A] mb-1">Pesanan Diterima!</h2>
+    <p class="text-sm text-stone-500 mb-3">Dapur langsung masak. Silakan bayar di kasir.</p>
+    <div class="bg-red-50 rounded-2xl p-4 mb-4">
+      <p class="text-[11px] text-stone-500 uppercase tracking-wide">Nomor Pesanan</p>
+      <p class="font-mono font-extrabold text-xl text-[#450A0A]" id="qr-order-id">-</p>
+      <p class="font-extrabold text-lg mt-1" id="qr-order-total">-</p>
+    </div>
+    <button onclick="resetQrPage()" class="w-full py-2.5 rounded-xl bg-stone-100 hover:bg-stone-200 text-stone-700 text-sm font-bold">
+      Pesan Lagi
+    </button>
+  </div>
+</div>
+
+<script>
+(function () {
+  const params = new URLSearchParams(location.search);
+  const OUTLET_ID = params.get('outlet') || '';
+  const TABLE = params.get('meja') || '';
+  let MENUS = [];
+  let CART = {}; // menu_id -> {qty, note}
+  let ACTIVE_CAT = 'all';
+
+  const $ = id => document.getElementById(id);
+  const fmtRp = n => 'Rp ' + Number(n || 0).toLocaleString('id-ID');
+  const esc = s => String(s == null ? '' : s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+
+  if (!OUTLET_ID) {
+    $('qr-menu').innerHTML = '<p class="text-center text-red-600 text-sm py-10">QR tidak valid. Minta QR baru ke pelayan.</p>';
+    return;
+  }
+  $('qr-table-label').textContent = TABLE ? ('Meja ' + TABLE) : 'Dine-in';
+
+  async function init() {
+    try {
+      // Nama outlet
+      const or = await fetch('/api/outlet-public?id=' + encodeURIComponent(OUTLET_ID));
+      const od = await or.json().catch(() => ({}));
+      if (od && od.name) $('qr-outlet-name').textContent = od.name;
+    } catch (e) {}
+    // Menu via endpoint publik per outlet
+    try {
+      const r = await fetch('/api/qr/menu?outlet_id=' + encodeURIComponent(OUTLET_ID));
+      const d = await r.json();
+      if (!d.success) throw new Error(d.message);
+      MENUS = d.menus || [];
+      renderCats();
+      renderMenu();
+    } catch (e) {
+      $('qr-menu').innerHTML = '<p class="text-center text-red-600 text-sm py-10">Gagal memuat menu. Coba lagi.</p>';
+    }
+  }
+
+  function renderCats() {
+    const cats = ['all', ...new Set(MENUS.map(m => m.category).filter(Boolean))];
+    $('qr-cats').innerHTML = cats.map(c =>
+      `<button onclick="setQrCat('${esc(c)}')" class="shrink-0 px-3 py-1.5 rounded-full text-xs font-bold ${c === ACTIVE_CAT ? 'bg-white text-[#450A0A]' : 'bg-white/20 text-white'}">${c === 'all' ? 'Semua' : esc(c)}</button>`
+    ).join('');
+  }
+  window.setQrCat = c => { ACTIVE_CAT = c; renderCats(); renderMenu(); };
+
+  function renderMenu() {
+    const list = MENUS.filter(m => ACTIVE_CAT === 'all' || m.category === ACTIVE_CAT);
+    $('qr-menu').innerHTML = list.length ? list.map(m => {
+      const inCart = CART[m.id] ? CART[m.id].qty : 0;
+      const soldOut = !m.inStock;
+      return `
+      <div class="menu-card bg-white rounded-2xl p-3 flex gap-3 items-center border ${soldOut ? 'opacity-50' : 'border-stone-200 shadow-sm'}">
+        <div class="flex-1 min-w-0">
+          <p class="font-bold text-sm text-[#450A0A] truncate">${esc(m.name)}</p>
+          <p class="text-xs text-stone-500">${fmtRp(m.price)}</p>
+          ${soldOut ? '<span class="text-[10px] font-bold text-red-600 bg-red-100 px-2 py-0.5 rounded-full">HABIS</span>' : ''}
+        </div>
+        ${soldOut ? '' : (inCart === 0
+          ? `<button onclick="qrAdd('${m.id}')" class="px-4 py-2 rounded-xl bg-[#DC2626] text-white text-xs font-extrabold">+ Tambah</button>`
+          : `<div class="flex items-center gap-2">
+               <button onclick="qrDec('${m.id}')" class="qty-btn rounded-full bg-stone-200 text-stone-700 font-extrabold">−</button>
+               <span class="font-extrabold text-sm w-5 text-center">${inCart}</span>
+               <button onclick="qrAdd('${m.id}')" class="qty-btn rounded-full bg-[#DC2626] text-white font-extrabold">+</button>
+             </div>`)}
+      </div>`;
+    }).join('') : '<p class="text-center text-stone-400 text-sm py-10">Menu kosong.</p>';
+  }
+
+  window.qrAdd = id => {
+    const m = MENUS.find(x => x.id === id);
+    if (!m || !m.inStock) return;
+    if (!CART[id]) CART[id] = { qty: 0, note: '' };
+    if (CART[id].qty >= 50) return;
+    CART[id].qty++;
+    renderMenu(); renderCart();
+  };
+  window.qrDec = id => {
+    if (!CART[id]) return;
+    CART[id].qty--;
+    if (CART[id].qty <= 0) delete CART[id];
+    renderMenu(); renderCart();
+  };
+
+  function cartCount() { return Object.values(CART).reduce((a, c) => a + c.qty, 0); }
+  function cartSubtotal() {
+    return Object.entries(CART).reduce((a, [id, c]) => {
+      const m = MENUS.find(x => x.id === id);
+      return a + (m ? m.price * c.qty : 0);
+    }, 0);
+  }
+
+  function renderCart() {
+    const n = cartCount();
+    const bar = $('cart-bar');
+    if (!n) { bar.classList.add('translate-y-full'); return; }
+    bar.classList.remove('translate-y-full');
+    const sub = cartSubtotal();
+    const tax = Math.round(sub * 0.10);
+    $('cart-items').innerHTML = Object.entries(CART).map(([id, c]) => {
+      const m = MENUS.find(x => x.id === id);
+      if (!m) return '';
+      return `
+      <div class="flex items-center gap-2 text-sm">
+        <div class="flex-1 min-w-0">
+          <p class="font-bold truncate">${esc(m.name)} <span class="text-stone-400 font-normal">×${c.qty}</span></p>
+          <input type="text" maxlength="120" placeholder="Catatan (mis. es dikit)" value="${esc(c.note)}"
+                 oninput="qrNote('${id}', this.value)"
+                 class="w-full text-xs px-2 py-1 rounded-lg border border-stone-200 mt-0.5 focus:border-red-400 focus:outline-none">
+        </div>
+        <span class="font-bold text-xs whitespace-nowrap">${fmtRp(m.price * c.qty)}</span>
+        <button onclick="qrDec('${id}')" class="text-stone-400 hover:text-red-600 text-lg leading-none">×</button>
+      </div>`;
+    }).join('');
+    $('cart-total').textContent = fmtRp(sub + tax);
+  }
+  window.qrNote = (id, v) => { if (CART[id]) CART[id].note = v; };
+
+  window.submitQrOrder = async () => {
+    const btn = $('qr-submit-btn');
+    const items = Object.entries(CART).map(([id, c]) => ({ menu_id: id, qty: c.qty, note: c.note }));
+    if (!items.length) return;
+    btn.disabled = true; btn.textContent = 'Mengirim...';
+    try {
+      const r = await fetch('/api/qr/order', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          outlet_id: OUTLET_ID, table: TABLE,
+          customer_name: $('qr-name').value.trim(),
+          items
+        })
+      });
+      const d = await r.json();
+      if (d.success) {
+        $('qr-order-id').textContent = d.order.id;
+        $('qr-order-total').textContent = fmtRp(d.order.total);
+        $('qr-success').classList.remove('hidden');
+        CART = {}; renderMenu(); renderCart();
+      } else {
+        alert(d.message || 'Gagal memesan.');
+      }
+    } catch (e) { alert('Jaringan bermasalah. Coba lagi.'); }
+    btn.disabled = false; btn.textContent = 'Pesan Sekarang — Bayar di Kasir';
+  };
+
+  window.resetQrPage = () => { $('qr-success').classList.add('hidden'); };
+
+  init();
+})();
+</script>
+</body>
+</html>
