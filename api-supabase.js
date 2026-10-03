@@ -190,6 +190,17 @@
   /* (skema di-apply terpisah via Supabase SQL Editor). Probe sekali     */
   /* saat dibutuhkan, hasil di-cache — checkout lama tetap jalan.        */
   /* ------------------------------------------------------------------ */
+  var _hasKitchenStatus = null;
+  function ordersHasKitchenStatus() {
+    if (_hasKitchenStatus !== null) return Promise.resolve(_hasKitchenStatus);
+    return sel('orders', 'select=kitchen_status&limit=1').then(function () {
+      _hasKitchenStatus = true;
+      return true;
+    }).catch(function (e) {
+      _hasKitchenStatus = !/kitchen_status/i.test(String((e && e.message) || ''));
+      return _hasKitchenStatus;
+    });
+  }
   var _hasShiftId = null;
   function ordersHasShiftId() {
     if (_hasShiftId !== null) return Promise.resolve(_hasShiftId);
@@ -364,6 +375,7 @@
       paymentMethod: r.payment_method, cashPaid: r.cash_paid,
       cashChange: r.cash_change, paymentReference: r.payment_reference || '',
       cashier: r.cashier, status: r.status, shiftId: r.shift_id || null,
+      kitchenStatus: r.kitchen_status || 'new',
       clientRef: r.client_ref || null,
       promoId: r.promo_id || null, promoName: r.promo_name || null,
       customerId: r.customer_id || null, customerName: r.customer_name || null,
@@ -383,6 +395,7 @@
       payment_method: o.paymentMethod, cash_paid: o.cashPaid,
       cash_change: o.cashChange, payment_reference: o.paymentReference || '',
       cashier: o.cashier, status: o.status, shift_id: o.shiftId || null,
+      kitchen_status: o.kitchenStatus || 'new',
       outlet_id: o.outletId || null,
       client_ref: o.clientRef || null,
       promo_id: o.promoId || null, promo_name: o.promoName || null,
@@ -1128,6 +1141,58 @@
     }).catch(serverError);
   };
 
+  // 7b. GET /api/kitchen/orders — daftar order aktif untuk layar dapur.
+  //     Terbuka (perangkat dapur tanpa login, seperti POS); outlet diambil dari
+  //     kunci perangkat (window.__mykitchenOutletKey). Hanya order outlet ini
+  //     yg status dapurnya masih new/preparing/ready & belum void.
+  routes['GET /api/kitchen/orders'] = function () {
+    return ordersHasKitchenStatus().then(function (has) {
+      if (!has) return ok({ success: true, orders: [], needSql: true });
+      var q = 'select=*&status=neq.voided&kitchen_status=in.(new,preparing,ready)&order=created_at.asc&limit=100';
+      return sel('orders', q).then(function (rows) {
+        return ok({ success: true, orders: rows.map(rowToOrder) });
+      });
+    }).catch(serverError);
+  };
+
+  // 7c. POST /api/kitchen/order-status — { order_id, kitchen_status }
+  //     new -> preparing -> ready -> served. Terbuka spt POS; order wajib
+  //     milik outlet perangkat ini (dicek via scope).
+  routes['POST /api/kitchen/order-status'] = function (body) {
+    var VALID_KS = ['new', 'preparing', 'ready', 'served'];
+    var ks = String(body.kitchen_status || '');
+    if (VALID_KS.indexOf(ks) < 0) {
+      return Promise.resolve(bad({ success: false, message: 'Status dapur tidak valid.' }));
+    }
+    return ordersHasKitchenStatus().then(function (has) {
+      if (!has) return bad({ success: false, message: 'Kolom kitchen_status belum ada. Jalankan SQL skema dapur dulu.' });
+      return sel('orders', 'select=id,status,kitchen_status&id=eq.' + encodeURIComponent(body.order_id) + '&limit=1')
+        .then(function (rows) {
+          if (!rows.length) return notFound({ success: false, message: 'Order tidak ditemukan di outlet ini.' });
+          if (rows[0].status === 'voided') return bad({ success: false, message: 'Order sudah dibatalkan.' });
+          return upd('orders', 'id=eq.' + encodeURIComponent(body.order_id), { kitchen_status: ks })
+            .then(function (u) {
+              return ok({ success: true, order: rowToOrder(u[0]) });
+            });
+        });
+    }).catch(serverError);
+  };
+
+  // 7d. GET /api/kitchen/ingredients — stok bahan outlet perangkat dapur.
+  routes['GET /api/kitchen/ingredients'] = function () {
+    return sel('ingredients', 'select=id,name,current_stock,unit,min_stock_alert&order=name.asc&limit=500')
+      .then(function (rows) {
+        return ok({ success: true, ingredients: rows.map(function (r) {
+          var st = Number(r.current_stock) || 0, mn = Number(r.min_stock_alert) || 0;
+          return {
+            id: r.id, name: r.name, stock: st,
+            unit: r.unit || '', minStock: mn,
+            low: mn > 0 && st <= mn
+          };
+        }) });
+      }).catch(serverError);
+  };
+
   // 8. POST /api/pos/checkout
   routes['POST /api/pos/checkout'] = function (body) {
     if (!body.items || !Array.isArray(body.items) || body.items.length === 0) {
@@ -1181,6 +1246,7 @@
         cashier: body.cashier || 'Kasir 1',
         shiftId: body.shiftId || null,
         status: 'completed',
+        kitchenStatus: 'new', // dapur: baru masuk
         // client_ref: idempotensi sinkron offline (kolom opsional, skema bag.12)
         clientRef: body.client_ref || genClientRef()
       };
@@ -1214,6 +1280,9 @@
         // checkout lama tetap jalan; fitur shift butuh skema baru.
         return ordersHasShiftId().then(function (has) {
           if (!has) delete row.shift_id;
+          return ordersHasKitchenStatus();
+        }).then(function (hasKs) {
+          if (!hasKs) delete row.kitchen_status;
           return ordersHasExtCols();
         }).then(function (hasExt) {
           // Kolom discount_type dkk mungkin belum ada (skema lama) -> strip agar
